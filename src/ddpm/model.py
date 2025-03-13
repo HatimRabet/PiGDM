@@ -29,7 +29,7 @@ model_config = {'image_size': 256,
                 'use_fp16': False,
                 'use_new_attention_order': False,
                 'model_path': 'ffhq_10m.pt'}
-                
+
 model = create_model(**model_config)
 model = model.to(device)
 # use in eval mode:
@@ -39,7 +39,34 @@ model.eval();
 
 
 class DDPM:
+    """
+    Denoising Diffusion Probabilistic Model (DDPM) class for sampling and posterior inference.
+
+    This class provides methods for:
+      - Getting the predicted noise (epsilon) from the model.
+      - Predicting the original image (x_start) from the noisy image.
+      - Sampling from the diffusion model.
+      - Performing posterior sampling with a linear operator constraint.
+      - Sampling using an Euler ODE integration approach.
+
+    Attributes:
+        num_diffusion_timesteps (int): Total number of diffusion steps.
+        reversed_time_steps (np.ndarray): Array of timesteps in reverse order.
+        betas (np.ndarray): Linear schedule of beta values.
+        alphas (np.ndarray): Complementary values (1 - beta) for each timestep.
+        alphas_cumprod (np.ndarray): Cumulative product of alphas.
+        alphas_cumprod_prev (np.ndarray): Cumulative product of alphas for the previous timestep.
+        model: The denoising model used for epsilon prediction.
+        imgshape (tuple): Shape of the image tensor.
+    """
+
   def __init__(self, model=model):
+    """
+    Initialize the DDPM instance.
+
+    Args:
+        model: A PyTorch model used for noise prediction. It should be compatible with the guided diffusion framework.
+    """
     self.num_diffusion_timesteps = 1000
     self.reversed_time_steps = np.arange(self.num_diffusion_timesteps)[::-1]
     beta_start = 0.0001
@@ -54,18 +81,41 @@ class DDPM:
 
 
   def get_eps_from_model(self, x, t):
-    # the model outputs:
-    # - an estimation of the noise eps (chanels 0 to 2)
-    # - learnt variances for the posterior  (chanels 3 to 5)
-    # (see Improved Denoising Diffusion Probabilistic Models
-    # by Alex Nichol, Prafulla Dhariwal
-    # for the parameterization)
-    # We discard the second part of the output for this practice session.
+    """
+    Predict the noise epsilon from the model at a given timestep.
+
+    The model is expected to output a tensor where the first three channels represent
+    the estimated noise (epsilon). Any additional channels (e.g. learned variances)
+    are discarded in this implementation.
+
+    Args:
+        x (torch.Tensor): The current noisy image tensor.
+        t (int): The current timestep.
+
+    Returns:
+        torch.Tensor: The predicted noise tensor (epsilon) with the same spatial dimensions as x.
+    """
     model_output = self.model(x, torch.tensor(t, device=device).unsqueeze(0))
     model_output = model_output[:,:3,:,:]
     return(model_output)
 
   def predict_xstart_from_eps(self, x, eps, t):
+    """
+    Predict the original image x_start from the noisy image x and the predicted noise epsilon.
+
+    Uses the following relationship:
+        x_start = sqrt(1 / alpha_cumprod[t]) * x - sqrt(1 / alpha_cumprod[t] - 1) * eps
+
+    The result is clamped to the range [-1, 1].
+
+    Args:
+        x (torch.Tensor): The current noisy image tensor.
+        eps (torch.Tensor): The predicted noise tensor.
+        t (int): The current timestep.
+
+    Returns:
+        torch.Tensor: The predicted original image tensor (x_start), clamped between -1 and 1.
+    """
     x_start = (
         np.sqrt(1.0 / self.alphas_cumprod[t])* x
         - np.sqrt(1.0 / self.alphas_cumprod[t] - 1) * eps
@@ -74,6 +124,19 @@ class DDPM:
     return(x_start)
 
   def sample(self, show_steps=True):
+    """
+    Generate a sample image by iteratively reversing the diffusion process.
+
+    Starting from a random noise tensor, this method iterates backwards over the diffusion timesteps,
+    predicting the noise, estimating the original image, and updating the sample using a stochastic step.
+    Optionally, intermediate steps are displayed.
+
+    Args:
+        show_steps (bool): If True, displays intermediate steps using the display_as_pilimg function.
+
+    Returns:
+        torch.Tensor: The final sampled image tensor.
+    """
     with torch.no_grad():  # avoid backprop wrt model parameters
       x = torch.randn(self.imgshape,device=device)  # initialize x_t for t=T
       for i, t in enumerate(self.reversed_time_steps):
@@ -94,7 +157,23 @@ class DDPM:
     return(x)
 
   def posterior_sampling(self, linear_operator, y, x_true=None, show_steps=True, vis_y=None):
+    """
+    Perform posterior sampling with a linear operator constraint.
 
+    This method applies an iterative update on the noisy image tensor x using the gradient
+    of a loss function defined between the transformed predicted image (xhat) and the observation y.
+    An optional ground truth (x_true) and visualization image (vis_y) may be provided for comparison.
+
+    Args:
+        linear_operator (callable): A function that applies the forward model (linear operator) on an image tensor.
+        y (torch.Tensor): The observed data tensor.
+        x_true (torch.Tensor, optional): Ground truth image tensor for visualization. Defaults to None.
+        show_steps (bool): If True, displays intermediate steps using display_as_pilimg. Defaults to True.
+        vis_y (torch.Tensor, optional): A tensor for visualizing the observation. If None, y is used.
+
+    Returns:
+        torch.Tensor: The final image tensor after posterior sampling.
+    """
     # visualization image for the observation y:
     if vis_y is None:
       vis_y = y
@@ -139,6 +218,21 @@ class DDPM:
     return(x)
 
   def ode_euler_sampling(self, nb_times_integration=1000, noise_seed = None, show_steps=True, show_interval = 100):
+    """
+    Sample using Euler's method to solve an ODE approximation of the reverse diffusion process.
+
+    This method uses a discretized Euler integration scheme to update the image tensor over a given number
+    of integration steps. Intermediate results are optionally displayed.
+
+    Args:
+        nb_times_integration (int): Number of integration steps. Defaults to 1000.
+        noise_seed (optional): An optional seed for noise generation. (Note: not used in the current implementation.)
+        show_steps (bool): If True, displays intermediate results. Defaults to True.
+        show_interval (int): Interval of timesteps at which to show the intermediate images. Defaults to 100.
+
+    Returns:
+        torch.Tensor: The final image tensor after ODE Euler sampling.
+    """
     # Initialize xt for t = T
     x = torch.randn(self.imgshape,device=device)
     T = 1000

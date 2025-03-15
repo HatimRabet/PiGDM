@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from tqdm import tqdm
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def pilimg_to_tensor(pil_img):
     """
@@ -50,6 +51,29 @@ def display_as_pilimg(t):
     t = t.clamp(0., 1.)
     pil_img = torchvision.transforms.ToPILImage()(t)
     display(pil_img)
+    return pil_img
+
+
+def save_pilimg(t, filename):
+    """
+    Convert a tensor to a PIL image, display it, and return the image.
+
+    This function rescales an input tensor from [-1, 1] back to [0, 1], moves it to CPU,
+    removes any singleton dimensions, clamps the values to ensure they are within [0, 1],
+    and converts it into a PIL image. The image is then displayed.
+
+    Parameters:
+        t (torch.Tensor): A tensor of shape [1, C, H, W] with values in the range [-1, 1].
+
+    Returns:
+        PIL.Image.Image: The converted PIL image.
+    """
+    t = 0.5 + 0.5 * t.to('cpu')
+    t = t.squeeze()
+    t = t.clamp(0., 1.)
+    pil_img = torchvision.transforms.ToPILImage()(t)
+    pil_img.save(filename)
+    
     return pil_img
 
 

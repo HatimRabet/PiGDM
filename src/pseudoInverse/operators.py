@@ -4,8 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Function
 
-
-
 class SuperResolutionPseudoinverseOperator:
     """
     Pseudoinverse operator for super-resolution tasks.
@@ -26,6 +24,9 @@ class SuperResolutionPseudoinverseOperator:
         if mode == 'pool':
             kernel_size = scale_factor
             self.pool = nn.AvgPool2d(kernel_size=kernel_size, stride=kernel_size)
+            
+    def __call__(self, x):
+        return self.forward(x)
     
     def forward(self, x):
         """

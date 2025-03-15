@@ -54,6 +54,9 @@ class DDPM:
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
         self.model = model
         self.imgshape = (1, 3, 256, 256)
+        
+    def __call__(self, x, t):
+        return self.get_eps_from_model(x, t)
 
     def get_eps_from_model(self, x, t):
         model_output = self.model(x, torch.tensor(t, device=device).unsqueeze(0))
@@ -79,6 +82,8 @@ class DDPM:
                     x - self.betas[t] * eps / (np.sqrt(1 - self.alphas_cumprod[t]))
                 ) / np.sqrt(self.alphas[t])
                 x = mut + np.sqrt(self.betas[t]) * z
+                
+                print(f"Min: {x.min().item()}, Max: {x.max().item()}")
 
                 if i == 0 or t % 100 == 0 or t == 0:
                     print("Iteration:", i, "; Discrete time:", t)

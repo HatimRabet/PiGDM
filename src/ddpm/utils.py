@@ -54,6 +54,29 @@ def display_as_pilimg(t):
     return pil_img
 
 
+def save_pilimg(t, filename):
+    """
+    Convert a tensor to a PIL image, display it, and return the image.
+
+    This function rescales an input tensor from [-1, 1] back to [0, 1], moves it to CPU,
+    removes any singleton dimensions, clamps the values to ensure they are within [0, 1],
+    and converts it into a PIL image. The image is then displayed.
+
+    Parameters:
+        t (torch.Tensor): A tensor of shape [1, C, H, W] with values in the range [-1, 1].
+
+    Returns:
+        PIL.Image.Image: The converted PIL image.
+    """
+    t = 0.5 + 0.5 * t.to('cpu')
+    t = t.squeeze()
+    t = t.clamp(0., 1.)
+    pil_img = torchvision.transforms.ToPILImage()(t)
+    pil_img.save(filename)
+    
+    return pil_img
+
+
 def visualize_denoiser(ddpm, img_pil):
     """
     Visualize the denoising process of a diffusion model on a given image.

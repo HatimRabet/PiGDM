@@ -60,34 +60,48 @@ def pigdm_sampling(
     N_timeseps = eps_model.model.num_diffusion_timesteps
     timesteps = np.arange(N_timeseps)
 
+    betas = torch.tensor(eps_model.model.betas)
+    alphas = torch.tensor(eps_model.model.alphas)
+    alphas_cumprod = torch.tensor(eps_model.model.alphas_cumprod)
+    
     # Prepare for sampling loop
     N = N_timeseps - 1
     
     # Main sampling loop 
-    for i in range(N, 0, -1):
+    for i in tqdm(range(N, 0, -1)):
         t = timesteps[i]
-        s = timesteps[i-1]
+        # s = timesteps[i-1]
         
         x.requires_grad_(True)
         
-        # Get alpha_t as per VP-SDE
-        sigma_t = eps_model.model.betas[t]**0.5
-        sigma_s = eps_model.model.betas[s]**0.5
+        # # Get alpha_t as per VP-SDE
+        # sigma_t = eps_model.model.betas[t]**0.5
+        # sigma_s = eps_model.model.betas[s]**0.5
         
-        # print("sigma_t", sigma_t.item())
-        # print("sigma_s", sigma_s.item())
-        alpha_t = torch.tensor(1 / (1 + sigma_t**2))
-        alpha_s = torch.tensor(1 / (1 + sigma_s**2))
+        # # print("sigma_t", sigma_t.item())
+        # # print("sigma_s", sigma_s.item())
+        # alpha_t = torch.tensor(1 / (1 + sigma_t**2))
+        # alpha_s = torch.tensor(1 / (1 + sigma_s**2))
         
         # Predict the noise using the model
         epsilon_theta = eps_model(x, t) # same as model.get_eps_from_model
                 
         # Predict the one-step denoised result
-        x_hat_t = (x - torch.sqrt(1 - alpha_t) * epsilon_theta) / torch.sqrt(alpha_t)
+        # x_hat_t = (x - torch.sqrt(1 - alpha_t) * epsilon_theta) / torch.sqrt(alpha_t)
+        
+        x_hat_t = eps_model.model.predict_xstart_from_eps(x, epsilon_theta, t)
+        
+        z = torch.randn_like(x, device=device)
+                
+        mut = (
+            x - betas[t] * epsilon_theta / (np.sqrt(1 - alphas_cumprod[t]))
+        ) / np.sqrt(alphas[t])
+        
+        
         
         # Calculate DDIM coefficients
-        c1 = eta * torch.sqrt((1 - alpha_t/alpha_s) * (1 - alpha_s) / (1 - alpha_t))
-        c2 = torch.sqrt(1 - alpha_s - c1**2)
+        # c1 = eta * torch.sqrt((1 - alpha_t/alpha_s) * (1 - alpha_s) / (1 - alpha_t))
+        # c2 = torch.sqrt(1 - alpha_s - c1**2)
         
         # Calculate the guidance term g
         if noiseless:
@@ -126,36 +140,36 @@ def pigdm_sampling(
             # stats_tensor(g, "g")
             
             
-        else:
-            if measurement_matrix is None or sigma_y is None:
-                raise ValueError("measurement_matrix and sigma_y must be provided for noisy case")
+        # else:
+        #     if measurement_matrix is None or sigma_y is None:
+        #         raise ValueError("measurement_matrix and sigma_y must be provided for noisy case")
             
-            # Calculate predicted measurement
-            H = measurement_matrix
-            r_t = torch.sqrt(sigma_t ** 2 / (sigma_t ** 2 + 1))  # from the paper see page 16
+        #     # Calculate predicted measurement
+        #     H = measurement_matrix
+        #     r_t = torch.sqrt(sigma_t ** 2 / (sigma_t ** 2 + 1))  # from the paper see page 16
             
-            # Calculate derivative of x_hat_t with respect to x_t
-            x.requires_grad_(True)
-            x_hat_t_temp = (x - torch.sqrt(1 - alpha_t) * eps_model(x, t)) / torch.sqrt(alpha_t)
-            # dx_hat_dx = torch.autograd.grad(x_hat_t_temp, x, 
-            #                                grad_outputs=torch.ones_like(x_hat_t_temp))[0]
-            dx_hat_dx = torch.autograd.grad(x_hat_t_temp, x)[0]
-            x.requires_grad_(False)
+        #     # Calculate derivative of x_hat_t with respect to x_t
+        #     x.requires_grad_(True)
+        #     x_hat_t_temp = (x - torch.sqrt(1 - alpha_t) * eps_model(x, t)) / torch.sqrt(alpha_t)
+        #     # dx_hat_dx = torch.autograd.grad(x_hat_t_temp, x, 
+        #     #                                grad_outputs=torch.ones_like(x_hat_t_temp))[0]
+        #     dx_hat_dx = torch.autograd.grad(x_hat_t_temp, x)[0]
+        #     x.requires_grad_(False)
             
-            # Calculate the inverse matrix term (HHᵀ + σ²y/r²t * I)⁻¹
-            HHT = torch.matmul(H, H.transpose(0, 1))
-            reg_term = (sigma_y / r_t)**2 * torch.eye(HHT.shape[0], device=device)
-            inv_term = torch.inverse(HHT + reg_term)
+        #     # Calculate the inverse matrix term (HHᵀ + σ²y/r²t * I)⁻¹
+        #     HHT = torch.matmul(H, H.transpose(0, 1))
+        #     reg_term = (sigma_y / r_t)**2 * torch.eye(HHT.shape[0], device=device)
+        #     inv_term = torch.inverse(HHT + reg_term)
             
-            # Calculate residual y - H*x_hat_t
-            residual = y - torch.matmul(H, x_hat_t)
+        #     # Calculate residual y - H*x_hat_t
+        #     residual = y - torch.matmul(H, x_hat_t)
             
-            # Calculate guidance term
-            g_term = torch.matmul(torch.matmul(torch.matmul(residual.transpose(0, 1), inv_term), H), dx_hat_dx)
-            g = g_term.view_as(x)
+        #     # Calculate guidance term
+        #     g_term = torch.matmul(torch.matmul(torch.matmul(residual.transpose(0, 1), inv_term), H), dx_hat_dx)
+        #     g = g_term.view_as(x)
         
         # Sample Gaussian noise for the stochastic part
-        epsilon = torch.randn_like(x)
+        # epsilon = torch.randn_like(x)
         
         x = x.detach()
         # PiGDM update (last part of the algorithm)
@@ -172,12 +186,20 @@ def pigdm_sampling(
         # stats_tensor(c2 * epsilon_theta, "eps_theta term")
         # stats_tensor(torch.sqrt(alpha_t) * g, "g_term")
         
-        x = torch.sqrt(alpha_s) * x_hat_t + c1 * epsilon + c2 * epsilon_theta + torch.sqrt(alpha_t) * g
+        # print("coef", torch.sqrt(alphas_cumprod[t]).item())
+        # stats_tensor(torch.sqrt(alphas_cumprod[t]) * g, "guidance term")
+        x = mut + np.sqrt(betas[t]) * z + torch.sqrt(alphas_cumprod[t]) * g
+        
+        # stats_tensor(x, "x")
+        
+        
+    
+        # x = torch.sqrt(alpha_s) * x_hat_t + c1 * epsilon + c2 * epsilon_theta + torch.sqrt(alpha_t) * g
         
         # stats_tensor(x, "x")
         
     
-    return eps_model.model.predict_xstart_from_eps(x, epsilon_theta, t)
+    return x_hat_t
 
 
 ## I should modify this don't forget

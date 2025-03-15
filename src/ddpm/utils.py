@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from tqdm import tqdm
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def pilimg_to_tensor(pil_img):
     """

@@ -1,13 +1,13 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from operators import SuperResolutionPseudoinverseOperator
-from src.ddpm.model import DDPM
+from pseudoInverse.operators import SuperResolutionPseudoinverseOperator
+from ddpm.model import DDPM
 
 def pigdm_sampling(
     y,                      # Measurement/observation
     eps_model,              # Epsilon prediction model
-    timesteps,              # Sequence of timesteps {vi}
+    # timesteps,              # Sequence of timesteps {vi}
     eta=0.0,                # Controls the stochasticity (0 for DDIM, 1 for DDPM)
     measurement_operator=None,  # Function h(x) for noiseless case
     measurement_matrix=None,    # Matrix H for noisy case
@@ -42,6 +42,7 @@ def pigdm_sampling(
     device = next(eps_model.parameters()).device if hasattr(eps_model, 'parameters') else available_device
     shape = measurement_operator(torch.zeros(1, device=device)).shape if measurement_operator is not None else y.shape
     x = torch.randn(shape, device=device)
+    timesteps = eps_model.num_diffusion_timesteps
     
     # Prepare for sampling loop
     N = len(timesteps) - 1
@@ -52,8 +53,8 @@ def pigdm_sampling(
         s = timesteps[i-1]
         
         # Get alpha_t as per VP-SDE
-        sigma_t = get_noise_schedule(t)
-        sigma_s = get_noise_schedule(s)
+        sigma_t = eps_model.betas[t]
+        sigma_s = eps_model.betas[s]
         alpha_t = 1 / (1 + sigma_t**2)
         alpha_s = 1 / (1 + sigma_s**2)
         
@@ -175,7 +176,7 @@ def example_usage(y):
         eps_model=eps_model,
         timesteps=timesteps,
         eta=1.0,
-        measurement_operator=measurement_op,
+        measurement_operator=measurement_operator,
         noiseless=True
     )
     

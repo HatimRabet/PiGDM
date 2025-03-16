@@ -14,6 +14,14 @@ from ddpm.utils import pilimg_to_tensor, save_pilimg
 def stats_tensor(x, name):
     print(f"{name} Min: {x.min().item()}, Max: {x.max().item()}")
 
+def initialize(model, measurement_operator, y, t, device='cuda'):
+    alpha_t = model.alphas_cumprod[t]
+    x0 = measurement_operator.pseudoinverse(y).to(device)
+    n = x0.size()
+    t = torch.ones(n).to(x0.device).long() * t
+    noise = torch.randn_like(x0)
+    return np.sqrt(alpha_t) * x0 + np.sqrt((1 - alpha_t)) * noise
+
 def pigdm_sampling(
     y,                      # Measurement/observation
     eps_model,              # Epsilon prediction model
@@ -55,7 +63,7 @@ def pigdm_sampling(
     # shape = y.shape # measurement_operator.forward(torch.zeros(1, device=device)).shape if measurement_operator is not None else 
     shape = eps_model.model.imgshape
     
-    x = torch.randn(shape, device=device)
+    x = initialize(eps_model.model, measurement_operator, y, t=500)
     
     N_timeseps = eps_model.model.num_diffusion_timesteps
     timesteps = np.arange(N_timeseps)
@@ -63,12 +71,15 @@ def pigdm_sampling(
     betas = torch.tensor(eps_model.model.betas)
     alphas = torch.tensor(eps_model.model.alphas)
     alphas_cumprod = torch.tensor(eps_model.model.alphas_cumprod)
-    
+
+    T = eps_model.model.num_diffusion_timesteps
+    timesteps = np.arange(T // 2, -1, -1)
+
     # Prepare for sampling loop
     N = N_timeseps - 1
     
     # Main sampling loop 
-    for i in tqdm(range(N, 0, -1)):
+    for i in tqdm(range(T // 2)):
         t = timesteps[i]
         # s = timesteps[i-1]
         
@@ -93,9 +104,12 @@ def pigdm_sampling(
         
         z = torch.randn_like(x, device=device)
                 
-        mut = (
-            x - betas[t] * epsilon_theta / (np.sqrt(1 - alphas_cumprod[t]))
-        ) / np.sqrt(alphas[t])
+        # mut = (
+        #     x - betas[t] * epsilon_theta / (np.sqrt(1 - alphas_cumprod[t]))
+        # ) / np.sqrt(alphas[t])
+
+        mut = (x - betas[t] * epsilon_theta / np.sqrt(1 - alphas_cumprod[t])) / np.sqrt(alphas[t])
+
         
         
         
@@ -259,7 +273,7 @@ def example_usage(y):
 
 if __name__ == "__main__":
     # CONFIGURATION
-    image_path = "ddpm/diffusion-posterior-sampling/data/samples/00003.png"
+    image_path = "ddpm/diffusion-posterior-sampling/data/samples/00014.png"
     scale_factor = 4  # Example scaling (update to match self.scale_factor in your class)
 
     # Load image with PIL

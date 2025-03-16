@@ -10,6 +10,7 @@ import torchvision.transforms as T
 from pseudoInverse.operators import SuperResolutionPseudoinverseOperator
 from ddpm.model import DDPM
 from ddpm.utils import pilimg_to_tensor, save_pilimg
+from tqdm import tqdm
 
 def stats_tensor(x, name):
     print(f"{name} Min: {x.min().item()}, Max: {x.max().item()}")
@@ -23,7 +24,8 @@ def pigdm_sampling(
     measurement_matrix=None,    # Matrix H for noisy case
     sigma_y=None,           # Measurement noise std for noisy case
     noiseless=True,         # Whether to use noiseless or noisy formulation
-    seed=None               # Random seed for reproducibility
+    seed=None,
+    superResolution=True               # Random seed for reproducibility
 ):
     """
     Implementation of the PiGDM (Pseudoinverse Guided Diffusion Model) sampling algorithm.
@@ -54,19 +56,24 @@ def pigdm_sampling(
     y = y.to(device)
     # shape = y.shape # measurement_operator.forward(torch.zeros(1, device=device)).shape if measurement_operator is not None else 
     shape = eps_model.model.imgshape
-    
-    x = torch.randn(shape, device=device)
-    
-    N_timeseps = eps_model.model.num_diffusion_timesteps
-    timesteps = np.arange(N_timeseps)
+    if superResolution:
+        N = 500
+        num_iterations = 100
+        step = N // num_iterations
 
-    # Prepare for sampling loop
-    N = N_timeseps - 1
+        x =  pseudoinverse_operator(y, measurement_operator)
+        save_pilimg(x, "image_upsampled.jpg")
+        x += (eps_model.model.betas[N] ** 0.5) * torch.randn_like(x)
+    
+    # N_timeseps = eps_model.model.num_diffusion_timesteps
+    timesteps = np.arange(N, -1, -step) 
+    # timesteps = np.arange(N+1)
+
     
     # Main sampling loop 
-    for i in range(N, 0, -1):
+    for i in tqdm(range(num_iterations)):
         t = timesteps[i]
-        s = timesteps[i-1]
+        s = timesteps[i+1]
         
         x.requires_grad_(True)
         

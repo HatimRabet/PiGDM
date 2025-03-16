@@ -10,7 +10,7 @@ from ddpm.model import DDPM
 
 
 class PiGDM:
-    def __init__(self, model, measurement_operator, eta=0.0, grad_term_weight=1.0, device='cuda'):
+    def __init__(self, model, measurement_operator, eta=1, grad_term_weight=0.01, device='cuda'):
         self.model = model
         self.measurement_operator = measurement_operator
         self.eta = eta
@@ -51,7 +51,9 @@ class PiGDM:
             mat_x = (diff.detach() * x0_pred.reshape(x0_pred.size(0), -1)).sum()
             grad_term = torch.autograd.grad(mat_x, xt, retain_graph=True)[0].detach()
 
-            coeff = np.sqrt(alpha_s) * np.sqrt(alpha_t) * self.grad_term_weight
+            # coeff = np.sqrt(alpha_s) * np.sqrt(alpha_t) * self.grad_term_weight
+            coeff = np.sqrt(alpha_t) * self.grad_term_weight
+
 
             noise = torch.randn_like(xt)
             xt = (np.sqrt(alpha_s) * x0_pred 
@@ -100,7 +102,7 @@ if __name__ == "__main__":
         model=wrapped_model,
         measurement_operator=measurement_operator,
         eta=1, 
-        grad_term_weight=1.0,
+        grad_term_weight=0.05,
         device="cuda" if torch.cuda.is_available() else "cpu"
     )
 

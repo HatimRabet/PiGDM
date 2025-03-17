@@ -4,15 +4,13 @@ import time
 import torchvision.transforms as transforms
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 from torchmetrics.image.fid import FrechetInceptionDistance
-from torchvision.models import resnet50
-from ddpm.utils import save_pilimg
+from ddpm.utils import save_pilimg, pilimg_to_tensor
 from torch.utils.data import Dataset
 import os
 from PIL import Image
 import matplotlib.pyplot as plt
 
 # Load a pre-trained classifier (for classifier accuracy)
-classifier = resnet50(pretrained=True).eval()
 fid_metric = FrechetInceptionDistance(feature=2048)
 
 # Function to compute PSNR
@@ -26,28 +24,18 @@ def compute_psnr(img_true, img_recon):
 def compute_ssim(img_true, img_recon):
     img_true = img_true.cpu().numpy().transpose(1, 2, 0)
     img_recon = img_recon.cpu().numpy().transpose(1, 2, 0)
-    ssim_value = structural_similarity(img_true, img_recon, data_range=1.0, multichannel=True)
+    ssim_value = structural_similarity(img_true, img_recon, data_range=1.0, channel_axis=-1)
     return ssim_value
 
 # Function to compute FID
 def compute_fid(real_images, generated_images):
+    # Convert images from float (0,1) to uint8 (0,255)
+    real_images = (real_images * 255).clamp(0, 255).to(torch.uint8)
+    generated_images = (generated_images * 255).clamp(0, 255).to(torch.uint8)
+    
     fid_metric.update(real_images, real=True)
     fid_metric.update(generated_images, real=False)
     return fid_metric.compute().item()
-
-# Function to compute classifier accuracy
-def compute_classifier_accuracy(reconstructed_images, labels, device="cuda"):
-    reconstructed_images = transforms.Resize((224, 224))(reconstructed_images)  # Resize for ResNet
-    classifier.to(device)
-    reconstructed_images = reconstructed_images.to(device)
-    labels = labels.to(device)
-
-    with torch.no_grad():
-        outputs = classifier(reconstructed_images)
-        preds = torch.argmax(outputs, dim=1)
-        accuracy = (preds == labels).float().mean().item()
-    
-    return accuracy
 
 # Function to measure inference speed
 def measure_inference_speed(model, measurement_operator, test_loader, device="cuda"):
@@ -70,7 +58,7 @@ def measure_inference_speed(model, measurement_operator, test_loader, device="cu
 
 
 def evaluate_model(sampler, test_loader, num_steps = 100, sigma_y=None, noiseless=True, seed=None, device="cuda"):
-    psnr_list, ssim_list, fid_real, fid_fake, classifier_acc_list = [], [], [], [], []
+    psnr_list, ssim_list, fid_real, fid_fake = [], [], [], []
 
     real_images_list, recon_images_list = [], []
     
@@ -87,10 +75,6 @@ def evaluate_model(sampler, test_loader, num_steps = 100, sigma_y=None, noiseles
 
         real_images_list.append(real_images.cpu())
         recon_images_list.append(reconstructed_images.cpu())
-
-        # # Compute classifier accuracy
-        # classifier_acc = compute_classifier_accuracy(reconstructed_images, labels, device)
-        # classifier_acc_list.append(classifier_acc)
 
     # Compute FID
     fid_real = torch.cat(real_images_list)
@@ -138,15 +122,6 @@ def plot_results(results, save_path="results/super_resolution/"):
     plt.title("Distribution of SSIM Scores")
     plt.legend()
 
-    # Histogram of Classifier Accuracy
-    plt.subplot(1, 3, 3)
-    plt.hist(results["all_classifier_acc"], bins=20, color='orange', alpha=0.7, edgecolor='black')
-    plt.axvline(results["Classifier Accuracy"], color='red', linestyle='dashed', linewidth=2, label=f'Avg Acc: {results["Classifier Accuracy"]:.2f}')
-    plt.xlabel("Classifier Accuracy")
-    plt.ylabel("Frequency")
-    plt.title("Distribution of Classifier Accuracy")
-    plt.legend()
-
     # Save Accuracy plot
     plt.savefig(os.path.join(save_path, "psnr_ssim_acc.png"))
 
@@ -171,4 +146,4 @@ class ImageDataset(Dataset):
         if self.transform:
             image = self.transform(image)
         
-        return image
+        return pilimg_to_tensor(image).squeeze(0)

@@ -15,12 +15,13 @@ if __name__ == "__main__":
 
     dataset = ImageDataset(dataset_path)
 
-    # Create DataLoader
-    test_loader_all = DataLoader(dataset, batch_size=16, shuffle=True, num_workers=4)
-    subset_size = 5
-    indices = list(range(subset_size))  
-    test_loader = Subset(test_loader_all, indices)
+    subset_size = 2
+    indices = list(range(subset_size)) 
+    subset = Subset(dataset, indices)  
+    test_loader_all = DataLoader(subset, batch_size=2, shuffle=False)
 
+    # Create DataLoader
+    # test_loader_all = DataLoader(dataset, batch_size=16, shuffle=True, num_workers=4)
     measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
 
     # Intialize Model
@@ -33,7 +34,5 @@ if __name__ == "__main__":
     # Initialize sampler
     pigdm_sampler = PiGDM(model, measurement_operator, guidance_factor=guidance_factor)
 
-    results = evaluate_model(pigdm_sampler, test_loader, num_steps, sigma_y=None, noiseless=True, seed=None, device="cuda")
+    results = evaluate_model(pigdm_sampler, test_loader_all, num_steps, sigma_y=None, noiseless=True, seed=None, device="cuda")
     plot_results(results)
-
-

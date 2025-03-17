@@ -54,7 +54,6 @@ class PiGDM:
             # coeff = np.sqrt(alpha_s) * np.sqrt(alpha_t) * self.grad_term_weight
             coeff = np.sqrt(alpha_t) * self.grad_term_weight
 
-
             noise = torch.randn_like(xt)
             xt = (np.sqrt(alpha_s) * x0_pred 
                   + c1 * noise 

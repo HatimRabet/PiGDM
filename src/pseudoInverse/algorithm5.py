@@ -93,7 +93,7 @@ class PiGDM:
         # Prepare for sampling loop
         alphas_cumprod_t = alphas_cumprod[num_steps - 1]
             
-        x = initialize_xt(x0_estimate, alphas_cumprod_t)
+        x = self.initialize_xt(x0_estimate, alphas_cumprod_t)
         
         # Main sampling loop 
         for i in tqdm(range(num_steps-1, -1, -1)):
@@ -149,7 +149,7 @@ if __name__ == "__main__":
     measurement_operator = RotationOperator(45)
     low_res_img = measurement_operator(tensor_img)
     
-    low_res_img_show = pseudoinverse_operator(low_res_img, measurement_operator)
+    low_res_img_show = measurement_operator.pseudoinverse(low_res_img)
 
     # Intialize Model
     ddpm = DDPM()

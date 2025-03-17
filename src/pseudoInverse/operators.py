@@ -80,3 +80,79 @@ class SuperResolutionPseudoinverseOperator:
             return F.interpolate(y, size=(new_H, new_W), mode='bicubic', align_corners=False)
         else:
             raise ValueError(f"Unsupported mode: {self.mode}")
+
+
+
+class RotationOperator:
+    """
+    Rotation operator for image transformations.
+    Allows both forward (rotation) and pseudoinverse (inverse rotation) operations.
+    """
+    def __init__(self, theta):
+        """
+        Initialize the rotation operator.
+        
+        Args:
+            theta: Rotation angle in degrees.
+        """
+        self.theta = theta
+        
+    def __call__(self, x):
+        return self.forward(x)
+    
+    def forward(self, x):
+        """
+        Forward operation R(x): rotate image by theta degrees.
+        
+        Args:
+            x: Image tensor [B, C, H, W]
+        
+        Returns:
+            Rotated image tensor [B, C, H, W]
+        """
+        theta_rad = np.radians(self.theta)
+        
+        # Create affine transformation matrix
+        affine_matrix = torch.tensor([
+            [np.cos(theta_rad), -np.sin(theta_rad), 0],
+            [np.sin(theta_rad), np.cos(theta_rad), 0]
+        ], dtype=torch.float32, device=x.device)
+        
+        # Expand for batch processing
+        batch_size = x.shape[0]
+        affine_matrix = affine_matrix.unsqueeze(0).expand(batch_size, -1, -1)
+        
+        # Generate grid and apply transformation
+        grid = F.affine_grid(affine_matrix, x.size(), align_corners=False)
+        rotated = F.grid_sample(x, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
+        
+        return rotated
+    
+    def pseudoinverse(self, y):
+        """
+        Pseudoinverse operation R†(y): rotate image by -theta degrees.
+        
+        Args:
+            y: Rotated image tensor [B, C, H, W]
+        
+        Returns:
+            Original image tensor [B, C, H, W]
+        """
+        inverse_theta = -self.theta
+        theta_rad = np.radians(inverse_theta)
+        
+        # Create inverse affine transformation matrix
+        affine_matrix = torch.tensor([
+            [np.cos(theta_rad), -np.sin(theta_rad), 0],
+            [np.sin(theta_rad), np.cos(theta_rad), 0]
+        ], dtype=torch.float32, device=y.device)
+        
+        # Expand for batch processing
+        batch_size = y.shape[0]
+        affine_matrix = affine_matrix.unsqueeze(0).expand(batch_size, -1, -1)
+        
+        # Generate grid and apply inverse transformation
+        grid = F.affine_grid(affine_matrix, y.size(), align_corners=False)
+        restored = F.grid_sample(y, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
+        
+        return restored

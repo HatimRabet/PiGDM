@@ -5,7 +5,7 @@ from ddpm.utils import pilimg_to_tensor, save_pilimg
 
 from PIL import Image
 from torchvision.transforms import ToTensor, ToPILImage
-from pseudoInverse.operators import SuperResolutionPseudoinverseOperator
+from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator
 from ddpm.model import DDPM
 
 
@@ -79,7 +79,7 @@ class DiffusionWrapper:
 
 if __name__ == "__main__":
     # CONFIGURATION
-    image_path = "ddpm/diffusion-posterior-sampling/data/samples/00003.png"
+    image_path = "ddpm/diffusion-posterior-sampling/data/samples/00015.png"
     scale_factor = 4  
 
     # Load image with PIL
@@ -87,7 +87,9 @@ if __name__ == "__main__":
     tensor_img = pilimg_to_tensor(pil_img)
 
     # Setup measurement operator
-    measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic", scale_factor=scale_factor)
+    # measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic", scale_factor=scale_factor)
+    measurement_operator = RotationOperator(45)
+
 
     # Create low-resolution image (measurement)
     low_res_img = measurement_operator(tensor_img)
@@ -113,7 +115,7 @@ if __name__ == "__main__":
     )
 
     # Save the high-resolution reconstructed image
-    save_pilimg(high_res_reconstructed[-1], "reconstructed_image.png")
+    save_pilimg(high_res_reconstructed, "reconstructed_image_15.png")
 
     # Print the min and max pixel values
     print(f"Min: {high_res_reconstructed.min().item():.4f}, Max: {high_res_reconstructed.max().item():.4f}")

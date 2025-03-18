@@ -175,3 +175,43 @@ class IdentityOperator:
     
     def pseudoinverse(self, y):
         return y
+    
+    
+class GrayscaleOperator:
+    """
+    Grayscale operator for image transformations.
+    Converts RGB images to grayscale in the forward pass and reconstructs 
+    RGB images in the pseudoinverse by duplicating the grayscale values across channels.
+    
+    Assumes input tensor x has shape (batch, channels, height, width)
+    and expects 3 channels in forward.
+    """
+    def __init__(self):
+        self.name = "grayscale"
+
+    def __call__(self, x):
+        return self.forward(x)
+
+    def forward(self, x):
+        """
+        Convert RGB image (3 channels) to grayscale.
+        x: Tensor with shape (batch, 3, height, width)
+        """
+        if x.shape[1] != 3:
+            raise ValueError(f"Expected 3 channels (RGB), got {x.shape[1]} channels.")
+        
+        # Apply standard luminance conversion weights for grayscale
+        weights = torch.tensor([0.2989, 0.5870, 0.1140], device=x.device).view(1, 3, 1, 1)
+        grayscale = (x * weights).sum(dim=1, keepdim=True)  # shape: (batch, 1, height, width)
+        return grayscale
+
+    def pseudoinverse(self, y):
+        """
+        Reconstruct RGB image from grayscale by duplicating the grayscale channel.
+        y: Tensor with shape (batch, 1, height, width)
+        """
+        if y.shape[1] != 1:
+            raise ValueError(f"Expected 1 channel (grayscale), got {y.shape[1]} channels.")
+        
+        rgb_reconstructed = y.repeat(1, 3, 1, 1)  # shape: (batch, 3, height, width)
+        return rgb_reconstructed

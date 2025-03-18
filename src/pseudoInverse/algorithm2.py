@@ -7,7 +7,7 @@ from PIL import Image
 import torch.nn.functional as F
 import torchvision.transforms as T
 
-from pseudoInverse.operators import SuperResolutionPseudoinverseOperator
+from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, GrayscaleOperator
 from ddpm.model import DDPM
 from ddpm.utils import pilimg_to_tensor, save_pilimg
 
@@ -67,8 +67,9 @@ def pigdm_sampling(
     
     y = y.to(device)
     shape = eps_model.imgshape
-    
+    print(y.shape)
     x0_estimate = pseudoinverse_operator(y, measurement_operator)
+    print(x0_estimate.shape)
     
     N_timeseps = eps_model.num_diffusion_timesteps
     timesteps = np.arange(N_timeseps)
@@ -90,7 +91,7 @@ def pigdm_sampling(
         # s = timesteps[i-1]
         
         x.requires_grad_(True)
-    
+        print(x.shape)
         # Predict the noise using the model
         epsilon_theta, x_hat_t = eps_model(x, t) # same as model.get_eps_from_model
                 
@@ -169,7 +170,8 @@ class DiffusionModel:
 
 # Example usage:
 def example_usage(y, num_steps, guidance_factor):
-    measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
+    # measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
+    measurement_operator = GrayscaleOperator()
     # Create or load your epsilon prediction model
     ddpm = DDPM()
     eps_model = DiffusionModel(model=ddpm)  
@@ -206,16 +208,18 @@ if __name__ == "__main__":
     
 
     tensor_img = pilimg_to_tensor(pil_img)
-    measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
+    # measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
+    measurement_operator = GrayscaleOperator()
     low_res_img = measurement_operator(tensor_img)
     
     low_res_img_show = pseudoinverse_operator(low_res_img, measurement_operator)
-
+    print(low_res_img_show.shape)
+    
     high_res_img = example_usage(low_res_img, num_steps, guidance_factor)
     out = torch.cat((low_res_img_show, high_res_img, tensor_img), dim = 2)
     
     # print(high_res_img)
     print(f"Min: {high_res_img.min().item()}, Max: {high_res_img.max().item()}")
     
-    save_pilimg(out, "image_3.jpg")
+    save_pilimg(out, "image_15_1.jpg")
 

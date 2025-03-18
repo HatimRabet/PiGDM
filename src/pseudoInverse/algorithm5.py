@@ -3,7 +3,7 @@ import torch
 from tqdm import tqdm
 from PIL import Image
 
-from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator
+from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator, GrayscaleOperator
 from pseudoInverse.utils import DiffusionModel
 
 from ddpm.model import DDPM
@@ -11,7 +11,7 @@ from ddpm.utils import pilimg_to_tensor, save_pilimg
 
 
 class PiGDM:
-    def __init__(self, model, measurement_operator, measurement_matrix=None, eta=1, guidance_factor=0.005, device='cuda'):
+    def __init__(self, model, measurement_operator, measurement_matrix=None, eta=1, guidance_factor=0.01, device='cuda'):
         self.model = model
         self.measurement_operator = measurement_operator
         self.H = measurement_matrix
@@ -26,7 +26,7 @@ class PiGDM:
     def sample(
         self,
         y,                          
-        num_steps = 100,           
+        num_steps=500,           
         sigma_y=None,               
         noiseless=True,             
         seed=None                   
@@ -128,10 +128,11 @@ if __name__ == "__main__":
     guidance_factor = 0.01
     num_steps = 1000
     
-    image_path = "ddpm/diffusion-posterior-sampling/data/samples/00015.png"
-    scale_factor = 4  
+    image_name = "00014.png"
+    
+    image_path = f"ddpm/diffusion-posterior-sampling/data/samples/{image_name}"
 
-    noiseless = False
+    noiseless = True
     sigma_y = 0.1
 
     # Load image with PIL
@@ -139,8 +140,9 @@ if __name__ == "__main__":
 
     tensor_img = pilimg_to_tensor(pil_img)
     # measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
-    measurement_operator = IdentityOperator()
+    # measurement_operator = IdentityOperator()
     # measurement_operator = RotationOperator(45)
+    measurement_operator = GrayscaleOperator()
     measurement_matrix = torch.eye(256).to('cuda')
     low_res_img = measurement_operator(tensor_img)
     
@@ -160,4 +162,4 @@ if __name__ == "__main__":
     print(f"Min: {high_res_img.min().item()}, Max: {high_res_img.max().item()}")
 
     # Save Image
-    save_pilimg(out, "image_15.jpg")
+    save_pilimg(out, image_name)

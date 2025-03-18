@@ -10,11 +10,11 @@ from ddpm.model import DDPM
 
 
 class PiGDM:
-    def __init__(self, model, measurement_operator, eta=1, grad_term_weight=0.01, device='cuda'):
+    def __init__(self, model, measurement_operator, eta=1, guidance_factor=0.01, device='cuda'):
         self.model = model
         self.measurement_operator = measurement_operator
         self.eta = eta
-        self.grad_term_weight = grad_term_weight
+        self.grad_term_weight = guidance_factor
         self.device = device
 
     def initialize(self, y, t):
@@ -25,7 +25,14 @@ class PiGDM:
         noise = torch.randn_like(x0)
         return np.sqrt(alpha_t) * x0 + np.sqrt((1 - alpha_t)) * noise
 
-    def sample(self, y, num_steps=100):
+    def sample(self, 
+                y,                        
+                num_steps = 100,           
+                sigma_y=None,               
+                noiseless=True,             
+                seed=None 
+                ):
+        
         device = 'cuda'
         T = self.model.num_diffusion_timesteps
         timesteps = torch.linspace(T // 2, 0, num_steps+1).long().to(self.device)
@@ -63,9 +70,11 @@ class PiGDM:
         return xt
 
 
-class DiffusionWrapper:
+class DiffusionModel:
     def __init__(self, model):
         self.model = model
+        self.betas = model.betas
+        self.alphas = model.alphas
         self.alphas_cumprod = model.alphas_cumprod
         self.imgshape = model.imgshape
         self.num_diffusion_timesteps = model.num_diffusion_timesteps
@@ -96,14 +105,14 @@ if __name__ == "__main__":
     ddpm = DDPM()  
 
     # Wrap the model
-    wrapped_model = DiffusionWrapper(ddpm)
+    wrapped_model = DiffusionModel(ddpm)
 
     # Instantiate the PGDM sampler
     pgdm_sampler = PiGDM(
         model=wrapped_model,
         measurement_operator=measurement_operator,
         eta=1, 
-        grad_term_weight=0.05,
+        guidance_factor=0.05,
         device="cuda" if torch.cuda.is_available() else "cpu"
     )
 

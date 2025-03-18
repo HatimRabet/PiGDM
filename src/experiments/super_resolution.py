@@ -1,5 +1,4 @@
-from seaborn import reset_defaults
-from pseudoInverse.algorithm5 import PiGDM, DiffusionModel
+from pseudoInverse.algorithm4 import PiGDM, DiffusionModel
 from pseudoInverse.operators import SuperResolutionPseudoinverseOperator
 from ddpm.model import DDPM
 from experiments.utils import evaluate_model, ImageDataset, plot_results
@@ -21,15 +20,14 @@ if __name__ == "__main__":
     test_loader_all = DataLoader(subset, batch_size=2, shuffle=False)
 
     # Create DataLoader
-    # test_loader_all = DataLoader(dataset, batch_size=16, shuffle=True, num_workers=4)
     measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
 
     # Intialize Model
     ddpm = DDPM()
     model = DiffusionModel(model=ddpm) 
 
-    guidance_factor = 0.01
-    num_steps = 1000
+    guidance_factor = 0.05
+    num_steps = 100
 
     # Initialize sampler
     pigdm_sampler = PiGDM(model, measurement_operator, guidance_factor=guidance_factor)

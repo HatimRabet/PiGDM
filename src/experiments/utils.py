@@ -32,7 +32,7 @@ def compute_fid(real_images, generated_images):
     # Convert images from float (0,1) to uint8 (0,255)
     real_images = (real_images * 255).clamp(0, 255).to(torch.uint8)
     generated_images = (generated_images * 255).clamp(0, 255).to(torch.uint8)
-    
+
     fid_metric.update(real_images, real=True)
     fid_metric.update(generated_images, real=False)
     return fid_metric.compute().item()
@@ -105,7 +105,7 @@ def plot_results(results, save_path="results/super_resolution/"):
     plt.figure(figsize=(12, 5))
 
     # Histogram of PSNR values
-    plt.subplot(1, 3, 1)
+    plt.subplot(1, 2, 1)
     plt.hist(results["all_PSNR"], bins=20, color='blue', alpha=0.7, edgecolor='black')
     plt.axvline(results["PSNR"], color='red', linestyle='dashed', linewidth=2, label=f'Avg PSNR: {results["PSNR"]:.2f}')
     plt.xlabel("PSNR (dB)")
@@ -123,12 +123,10 @@ def plot_results(results, save_path="results/super_resolution/"):
     plt.legend()
 
     # Save Accuracy plot
-    plt.savefig(os.path.join(save_path, "psnr_ssim_acc.png"))
+    plt.savefig(os.path.join(save_path, "psnr_ssim.png"))
 
     plt.tight_layout()
     plt.show()
-
-    os.makedirs()
 
 class ImageDataset(Dataset):
     def __init__(self, folder_path, transform=None):

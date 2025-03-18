@@ -156,3 +156,22 @@ class RotationOperator:
         restored = F.grid_sample(y, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
         
         return restored
+    
+
+
+class IdentityOperator:
+    """
+    Rotation operator for image transformations.
+    Allows both forward (rotation) and pseudoinverse (inverse rotation) operations.
+    """
+    def __init__(self):
+        self.name = "identity"
+        
+    def __call__(self, x):
+        return self.forward(x)
+    
+    def forward(self, x):
+        return x
+    
+    def pseudoinverse(self, y):
+        return y

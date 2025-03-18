@@ -1,20 +1,21 @@
 import torch
 from tqdm import tqdm
 import numpy as np
-from ddpm.utils import pilimg_to_tensor, save_pilimg
-
 from PIL import Image
-from torchvision.transforms import ToTensor, ToPILImage
-from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator
+
+from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator
+from pseudoInverse.utils import DiffusionModel
+
+from ddpm.utils import pilimg_to_tensor, save_pilimg
 from ddpm.model import DDPM
 
-
 class PiGDM:
-    def __init__(self, model, measurement_operator, eta=1, guidance_factor=0.01, device='cuda'):
+    def __init__(self, model, measurement_operator, measurement_matrix=None, eta=1, guidance_factor=0.01, device='cuda'):
         self.model = model
         self.measurement_operator = measurement_operator
+        self.H = measurement_matrix
         self.eta = eta
-        self.grad_term_weight = guidance_factor
+        self.guidance_factor = guidance_factor
         self.device = device
 
     def initialize(self, y, t):
@@ -52,37 +53,39 @@ class PiGDM:
             c2 = np.sqrt((1 - alpha_s - c1**2))
 
             et, x0_pred = self.model(xt, t)
+            if noiseless:
+                if self.measurement_operator is None:
+                    raise ValueError("measurement_operator must be provided for noiseless case")
+                H = self.measurement_operator
+                diff = (H.pseudoinverse(y.to(device)) - H.pseudoinverse(H(x0_pred.to(device)))).reshape(x0_pred.to(device).size(0), -1)
+                mat_x = (diff.detach() * x0_pred.reshape(x0_pred.size(0), -1)).sum()
+                g = torch.autograd.grad(mat_x, xt, retain_graph=True)[0].detach()
+            else:
+                if self.H is None:
+                    raise ValueError("measurement_matrix must be provided for noisy case")
+                H = self.H
+                sigma_t = self.model.betas[t] ** 0.5
+                r_t = ((sigma_t ** 2) / (1 + sigma_t ** 2)) ** 0.5
 
-            H = self.measurement_operator
-            diff = (H.pseudoinverse(y.to(device)) - H.pseudoinverse(H(x0_pred.to(device)))).reshape(x0_pred.to(device).size(0), -1)
-            mat_x = (diff.detach() * x0_pred.reshape(x0_pred.size(0), -1)).sum()
-            grad_term = torch.autograd.grad(mat_x, xt, retain_graph=True)[0].detach()
+                HH_T = self.H @ self.H.T
+                noise_term = (sigma_y**2 / r_t**2) * torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype)
+                inv_matrix = torch.linalg.solve(HH_T + noise_term, torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype))
+                
+                mat_x = ((y - self.H @ x0_pred).detach() * ((inv_matrix @ self.H) @ x0_pred)).sum()
+                g = torch.autograd.grad(mat_x, xt, retain_graph=False)[0].detach()
+                
 
-            # coeff = np.sqrt(alpha_s) * np.sqrt(alpha_t) * self.grad_term_weight
-            coeff = np.sqrt(alpha_t) * self.grad_term_weight
+            # coeff = np.sqrt(alpha_s) * np.sqrt(alpha_t) * self.guidance_factor
+            coeff = np.sqrt(alpha_t) * self.guidance_factor
 
             noise = torch.randn_like(xt)
             xt = (np.sqrt(alpha_s) * x0_pred 
                   + c1 * noise 
                   + c2 * et 
-                  + coeff * grad_term).detach()
+                  + coeff * g).detach()
 
         return xt
 
-
-class DiffusionModel:
-    def __init__(self, model):
-        self.model = model
-        self.betas = model.betas
-        self.alphas = model.alphas
-        self.alphas_cumprod = model.alphas_cumprod
-        self.imgshape = model.imgshape
-        self.num_diffusion_timesteps = model.num_diffusion_timesteps
-
-    def __call__(self, x, t):
-        eps = self.model(x, t)
-        x0_pred = self.model.predict_xstart_from_eps(x, eps=eps, t=t)
-        return eps, x0_pred
 
 
 if __name__ == "__main__":
@@ -90,13 +93,19 @@ if __name__ == "__main__":
     image_path = "ddpm/diffusion-posterior-sampling/data/samples/00015.png"
     scale_factor = 4  
 
+    noiseless = False
+    sigma_y = 0.1
+
     # Load image with PIL
     pil_img = Image.open(image_path).convert('RGB')
     tensor_img = pilimg_to_tensor(pil_img)
 
     # Setup measurement operator
     # measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic", scale_factor=scale_factor)
-    measurement_operator = RotationOperator(45)
+    # measurement_operator = RotationOperator(45)
+    measurement_operator = IdentityOperator()
+    # measurement_operator = RotationOperator(45)
+    measurement_matrix = torch.eye(256).to('cuda')
 
 
     # Create low-resolution image (measurement)
@@ -105,12 +114,13 @@ if __name__ == "__main__":
     ddpm = DDPM()  
 
     # Wrap the model
-    wrapped_model = DiffusionModel(ddpm)
+    model = DiffusionModel(ddpm)
 
     # Instantiate the PGDM sampler
     pgdm_sampler = PiGDM(
-        model=wrapped_model,
+        model=model,
         measurement_operator=measurement_operator,
+        measurement_matrix=measurement_matrix,
         eta=1, 
         guidance_factor=0.05,
         device="cuda" if torch.cuda.is_available() else "cpu"
@@ -119,7 +129,9 @@ if __name__ == "__main__":
     # Perform super-resolution
     high_res_reconstructed = pgdm_sampler.sample(
         y=low_res_img,
-        num_steps=100
+        num_steps=100,
+        sigma_y=sigma_y,
+        noiseless=noiseless
     )
 
     # Save the high-resolution reconstructed image

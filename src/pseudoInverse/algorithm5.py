@@ -3,7 +3,7 @@ import torch
 from tqdm import tqdm
 from PIL import Image
 
-from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator, GrayscaleOperator
+from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator, GrayscaleOperator, GaussianDeblurOperator
 from pseudoInverse.utils import DiffusionModel
 
 from ddpm.model import DDPM
@@ -72,7 +72,7 @@ class PiGDM:
         x = self.initialize_xt(x0_estimate, alphas_cumprod_t)
         
         # Main sampling loop 
-        for i in tqdm(range(num_steps-1, -1, -1)):
+        for i in tqdm(range(num_steps-1, 0, -1)):
             t = timesteps[i]
             # s = timesteps[i-1]
             
@@ -86,7 +86,6 @@ class PiGDM:
             mut = (x - betas[t] * epsilon_theta / np.sqrt(1 - alphas_cumprod[t])) / np.sqrt(alphas[t])
             
 
-            
             # Calculate the guidance term g
             if noiseless:
                 if self.measurement_operator is None:
@@ -106,10 +105,12 @@ class PiGDM:
                 if self.H is None:
                     raise ValueError("measurement_matrix must be provided for noisy case")
                 sigma_t = betas[t] ** 0.5
-                r_t = ((sigma_t ** 2) / (1 + sigma_t ** 2)) ** 0.5
+                # r_t = ((sigma_t ** 2) / (1 + sigma_t ** 2)) ** 0.5
+                # r_t_2 = ((alphas[t] * alphas[t-1]) ** 0.5 / (1-alphas[t])) * r_t ** 2 
+                r_t_2 = (1-alphas_cumprod[t]) / alphas_cumprod[t]
 
                 HH_T = self.H @ self.H.T
-                noise_term = (sigma_y**2 / r_t**2) * torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype)
+                noise_term = (sigma_y**2 / r_t_2) * torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype)
                 inv_matrix = torch.linalg.solve(HH_T + noise_term, torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype))
                 
                 mat_x = ((y - self.H @ x_hat_t).detach() * ((inv_matrix @ self.H) @ x_hat_t)).sum()
@@ -118,14 +119,14 @@ class PiGDM:
             
             x = x.detach()
             # PiGDM update (last part of the algorithm)
-            x = (mut + np.sqrt(betas[t]) * z + torch.sqrt(alphas_cumprod[t]) * self.guidance_factor * g).detach()
+            x = (mut + np.sqrt(betas[t]) * z + self.eta * torch.sqrt(alphas_cumprod[t]) * self.guidance_factor * g).detach()
             
         return x
 
 
 if __name__ == "__main__":
     # CONFIGURATION
-    guidance_factor = 0.01
+    guidance_factor = 0.05
     num_steps = 1000
     
     image_name = "00014.png"
@@ -142,18 +143,21 @@ if __name__ == "__main__":
     # measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
     # measurement_operator = IdentityOperator()
     # measurement_operator = RotationOperator(45)
-    measurement_operator = GrayscaleOperator()
-    measurement_matrix = torch.eye(256).to('cuda')
+    # measurement_operator = GrayscaleOperator()
+    measurement_operator = GaussianDeblurOperator(sigma=0.5)
+    # measurement_matrix = torch.eye(256).to('cuda')
     low_res_img = measurement_operator(tensor_img)
     
     low_res_img_show = measurement_operator.pseudoinverse(low_res_img)
+    low_res_img_show = measurement_operator.add_noise(low_res_img_show, sigma_y)
  
     # Intialize Model
     ddpm = DDPM()
     model = DiffusionModel(model=ddpm) 
 
     # Initialize sampler
-    pidgm_sampler = PiGDM(model, measurement_operator, measurement_matrix, guidance_factor=guidance_factor)
+    # pidgm_sampler = PiGDM(model, measurement_operator, measurement_matrix, guidance_factor=guidance_factor)
+    pidgm_sampler = PiGDM(model, measurement_operator, guidance_factor=guidance_factor)
 
     # Result
     high_res_img = pidgm_sampler.sample(low_res_img, num_steps, sigma_y, noiseless)
@@ -162,4 +166,4 @@ if __name__ == "__main__":
     print(f"Min: {high_res_img.min().item()}, Max: {high_res_img.max().item()}")
 
     # Save Image
-    save_pilimg(out, image_name)
+    save_pilimg(out, "new_" + image_name)

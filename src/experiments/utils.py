@@ -114,7 +114,7 @@ def plot_results(results, save_path="results/super_resolution/"):
     plt.legend()
 
     # Histogram of SSIM values
-    plt.subplot(1, 3, 2)
+    plt.subplot(1, 2, 2)
     plt.hist(results["all_SSIM"], bins=20, color='green', alpha=0.7, edgecolor='black')
     plt.axvline(results["SSIM"], color='red', linestyle='dashed', linewidth=2, label=f'Avg SSIM: {results["SSIM"]:.2f}')
     plt.xlabel("SSIM")

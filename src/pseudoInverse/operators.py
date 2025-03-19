@@ -215,3 +215,126 @@ class GrayscaleOperator:
         
         rgb_reconstructed = y.repeat(1, 3, 1, 1)  # shape: (batch, 3, height, width)
         return rgb_reconstructed
+    
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+from scipy.ndimage import gaussian_filter
+
+class GaussianDeblurOperator:
+    """
+    Pseudoinverse operator for Gaussian deblurring tasks.
+    Applies a Gaussian blur in the forward pass and attempts to reverse it in the pseudoinverse.
+    """
+    def __init__(self, kernel_size=15, sigma=2.0, device='cuda'):
+        """
+        Initialize the Gaussian deblurring operator.
+        
+        Args:
+            kernel_size: Size of the Gaussian kernel (default: 15)
+            sigma: Standard deviation of the Gaussian kernel (default: 2.0)
+            device: Device to run computations on ('cuda' or 'cpu')
+        """
+        self.kernel_size = kernel_size
+        self.sigma = sigma
+        self.device = device
+        
+        # Create the Gaussian kernel
+        self.kernel = self._create_gaussian_kernel(kernel_size, sigma).to(device)
+        
+    def _create_gaussian_kernel(self, kernel_size, sigma):
+        """Create a 2D Gaussian kernel."""
+        # Create a 1D Gaussian kernel
+        x = np.linspace(-(kernel_size // 2), kernel_size // 2, kernel_size)
+        gauss_1d = np.exp(-0.5 * np.square(x) / np.square(sigma))
+        gauss_1d = gauss_1d / np.sum(gauss_1d)
+        
+        # Create a 2D Gaussian kernel
+        gauss_2d = np.outer(gauss_1d, gauss_1d)
+        gauss_2d = gauss_2d / np.sum(gauss_2d)
+        
+        # Convert to tensor with shape [1, 1, kernel_size, kernel_size]
+        return torch.FloatTensor(gauss_2d).unsqueeze(0).unsqueeze(0)
+    
+    def __call__(self, x):
+        return self.forward(x)
+    
+    def forward(self, x):
+        """
+        Forward operation h(x): sharp image to blurred image.
+        
+        Args:
+            x: Sharp image tensor [B, C, H, W]
+            
+        Returns:
+            Blurred image tensor [B, C, H, W]
+        """
+        B, C, H, W = x.shape
+        blurred = torch.zeros_like(x)
+        
+        # Apply Gaussian blur to each channel separately
+        for b in range(B):
+            for c in range(C):
+                # Extract channel and add batch dimension for conv2d
+                channel = x[b, c].unsqueeze(0).unsqueeze(0)
+                # Apply convolution with Gaussian kernel (padding='same' to maintain dimensions)
+                blurred_channel = F.conv2d(channel, self.kernel, padding=self.kernel_size//2)
+                blurred[b, c] = blurred_channel.squeeze()
+        
+        return blurred
+    
+    def pseudoinverse(self, y, deblur_strength=1.0):
+        """
+        Pseudoinverse operation h†(y): blurred image to sharp image estimation.
+        Uses a simple Wiener filter approach for deblurring.
+        """
+        B, C, H, W = y.shape
+        deblurred = torch.zeros_like(y)
+        
+        # Convert to frequency domain and apply Wiener filtering
+        for b in range(B):
+            for c in range(C):
+                # Extract channel and detach if needed
+                channel = y[b, c]
+                
+                # Use detach() before converting to numpy
+                channel_np = channel.detach().cpu().numpy()
+                kernel_np = self.kernel.squeeze().cpu().numpy()
+                
+                # Rest of the code remains the same...
+                padded_kernel = np.zeros((H, W))
+                kh, kw = kernel_np.shape
+                padded_kernel[:kh, :kw] = kernel_np
+                padded_kernel = np.roll(padded_kernel, -kh//2, axis=0)
+                padded_kernel = np.roll(padded_kernel, -kw//2, axis=1)
+                
+                # FFT of image and kernel
+                channel_fft = np.fft.fft2(channel_np)
+                kernel_fft = np.fft.fft2(padded_kernel)
+                
+                reg_param = 1.0 / deblur_strength
+                wiener_filter = np.conj(kernel_fft) / (np.abs(kernel_fft)**2 + reg_param)
+                
+                deblurred_fft = channel_fft * wiener_filter
+                deblurred_np = np.real(np.fft.ifft2(deblurred_fft))
+                
+                deblurred_np = np.clip(deblurred_np, 0.0, 1.0)
+                deblurred[b, c] = torch.from_numpy(deblurred_np).to(self.device)
+        
+        return deblurred
+    
+    def add_noise(self, y, noise_level=0.01):
+        """
+        Add Gaussian noise to the blurred image.
+        
+        Args:
+            y: Blurred image tensor [B, C, H, W]
+            noise_level: Standard deviation of the noise (default: 0.01)
+            
+        Returns:
+            Noisy blurred image tensor [B, C, H, W]
+        """
+        noise = torch.randn_like(y) * noise_level
+        return y + noise

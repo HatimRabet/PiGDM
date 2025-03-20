@@ -3,7 +3,7 @@ import torch
 from tqdm import tqdm
 from PIL import Image
 
-from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator, GrayscaleOperator, GaussianDeblurOperator
+from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator, GrayscaleOperator, BlurPseudoinverseOperator
 from pseudoInverse.utils import DiffusionModel
 
 from ddpm.model import DDPM
@@ -144,12 +144,12 @@ if __name__ == "__main__":
     # measurement_operator = IdentityOperator()
     # measurement_operator = RotationOperator(45)
     # measurement_operator = GrayscaleOperator()
-    measurement_operator = GaussianDeblurOperator(sigma=0.5)
+    measurement_operator = BlurPseudoinverseOperator(kernel_size=51, sigma=20.0)
     # measurement_matrix = torch.eye(256).to('cuda')
     low_res_img = measurement_operator(tensor_img)
     
     low_res_img_show = measurement_operator.pseudoinverse(low_res_img)
-    low_res_img_show = measurement_operator.add_noise(low_res_img_show, sigma_y)
+    # low_res_img_show = measurement_operator.add_noise(low_res_img_show, sigma_y)
  
     # Intialize Model
     ddpm = DDPM()
@@ -158,8 +158,9 @@ if __name__ == "__main__":
     # Initialize sampler
     # pidgm_sampler = PiGDM(model, measurement_operator, measurement_matrix, guidance_factor=guidance_factor)
     pidgm_sampler = PiGDM(model, measurement_operator, guidance_factor=guidance_factor)
+    
 
-    # Result
+    # # Result
     high_res_img = pidgm_sampler.sample(low_res_img, num_steps, sigma_y, noiseless)
     out = torch.cat((low_res_img_show, high_res_img, tensor_img), dim = 2)
 

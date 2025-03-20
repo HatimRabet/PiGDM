@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Function
+from pseudoInverse.utils import compute_svd, apply_matrix
 
 class SuperResolutionPseudoinverseOperator:
     """
@@ -217,124 +218,138 @@ class GrayscaleOperator:
         return rgb_reconstructed
     
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-from scipy.ndimage import gaussian_filter
-
-class GaussianDeblurOperator:
+class BlurPseudoinverseOperator:
     """
-    Pseudoinverse operator for Gaussian deblurring tasks.
-    Applies a Gaussian blur in the forward pass and attempts to reverse it in the pseudoinverse.
+    Pseudoinverse operator for blur tasks.
+    Uses SVD to compute the forward blur operation and its pseudoinverse.
     """
-    def __init__(self, kernel_size=15, sigma=2.0, device='cuda'):
+    def __init__(self, kernel_size, sigma, img_dim=256, device="cuda"):
         """
-        Initialize the Gaussian deblurring operator.
+        Initialize the blur pseudoinverse operator.
         
         Args:
-            kernel_size: Size of the Gaussian kernel (default: 15)
-            sigma: Standard deviation of the Gaussian kernel (default: 2.0)
-            device: Device to run computations on ('cuda' or 'cpu')
+            kernel: The 1D kernel to use for blurring
+            img_dim: The dimension of the image (default: 256)
+            device: The device to use for computation (default: "cuda")
         """
-        self.kernel_size = kernel_size
-        self.sigma = sigma
+        self.kernel = self.create_gaussian_kernel(kernel_size, sigma, device)
+        self.img_dim = img_dim
         self.device = device
         
-        # Create the Gaussian kernel
-        self.kernel = self._create_gaussian_kernel(kernel_size, sigma).to(device)
+        # Precompute SVD for efficiency
+        self.U_small, self.singulars_small, self.V_small = compute_svd(self.kernel, img_dim, device)
         
-    def _create_gaussian_kernel(self, kernel_size, sigma):
-        """Create a 2D Gaussian kernel."""
-        # Create a 1D Gaussian kernel
-        x = np.linspace(-(kernel_size // 2), kernel_size // 2, kernel_size)
-        gauss_1d = np.exp(-0.5 * np.square(x) / np.square(sigma))
-        gauss_1d = gauss_1d / np.sum(gauss_1d)
+        # Precompute singulars inverse for pseudoinverse operation
+        nonzero_idx = torch.nonzero(self.singulars_small, as_tuple=True)[0]
+
+        self.singulars_inv = torch.zeros_like(self.singulars_small)
+        self.singulars_inv[nonzero_idx] = 1 / self.singulars_small[nonzero_idx]
         
-        # Create a 2D Gaussian kernel
-        gauss_2d = np.outer(gauss_1d, gauss_1d)
-        gauss_2d = gauss_2d / np.sum(gauss_2d)
-        
-        # Convert to tensor with shape [1, 1, kernel_size, kernel_size]
-        return torch.FloatTensor(gauss_2d).unsqueeze(0).unsqueeze(0)
-    
     def __call__(self, x):
         return self.forward(x)
     
     def forward(self, x):
         """
-        Forward operation h(x): sharp image to blurred image.
+        Forward operation h(x): apply blur to the input image.
         
         Args:
-            x: Sharp image tensor [B, C, H, W]
+            x: Input image tensor
             
         Returns:
-            Blurred image tensor [B, C, H, W]
+            Blurred image tensor
         """
-        B, C, H, W = x.shape
-        blurred = torch.zeros_like(x)
-        
-        # Apply Gaussian blur to each channel separately
-        for b in range(B):
-            for c in range(C):
-                # Extract channel and add batch dimension for conv2d
-                channel = x[b, c].unsqueeze(0).unsqueeze(0)
-                # Apply convolution with Gaussian kernel (padding='same' to maintain dimensions)
-                blurred_channel = F.conv2d(channel, self.kernel, padding=self.kernel_size//2)
-                blurred[b, c] = blurred_channel.squeeze()
-        
-        return blurred
+        temp = apply_matrix(self.V_small.T, x, self.img_dim)
+        temp = self.singulars_small.view(1, 1, self.img_dim, 1) * temp
+        return apply_matrix(self.U_small, temp, self.img_dim)
     
-    def pseudoinverse(self, y, deblur_strength=1.0):
+    def pseudoinverse(self, y):
         """
-        Pseudoinverse operation h†(y): blurred image to sharp image estimation.
-        Uses a simple Wiener filter approach for deblurring.
-        """
-        B, C, H, W = y.shape
-        deblurred = torch.zeros_like(y)
-        
-        # Convert to frequency domain and apply Wiener filtering
-        for b in range(B):
-            for c in range(C):
-                # Extract channel and detach if needed
-                channel = y[b, c]
-                
-                # Use detach() before converting to numpy
-                channel_np = channel.detach().cpu().numpy()
-                kernel_np = self.kernel.squeeze().cpu().numpy()
-                
-                # Rest of the code remains the same...
-                padded_kernel = np.zeros((H, W))
-                kh, kw = kernel_np.shape
-                padded_kernel[:kh, :kw] = kernel_np
-                padded_kernel = np.roll(padded_kernel, -kh//2, axis=0)
-                padded_kernel = np.roll(padded_kernel, -kw//2, axis=1)
-                
-                # FFT of image and kernel
-                channel_fft = np.fft.fft2(channel_np)
-                kernel_fft = np.fft.fft2(padded_kernel)
-                
-                reg_param = 1.0 / deblur_strength
-                wiener_filter = np.conj(kernel_fft) / (np.abs(kernel_fft)**2 + reg_param)
-                
-                deblurred_fft = channel_fft * wiener_filter
-                deblurred_np = np.real(np.fft.ifft2(deblurred_fft))
-                
-                deblurred_np = np.clip(deblurred_np, 0.0, 1.0)
-                deblurred[b, c] = torch.from_numpy(deblurred_np).to(self.device)
-        
-        return deblurred
-    
-    def add_noise(self, y, noise_level=0.01):
-        """
-        Add Gaussian noise to the blurred image.
+        Pseudoinverse operation h†(y): attempt to recover the original image from a blurred one.
         
         Args:
-            y: Blurred image tensor [B, C, H, W]
-            noise_level: Standard deviation of the noise (default: 0.01)
+            y: Blurred image tensor
             
         Returns:
-            Noisy blurred image tensor [B, C, H, W]
+            Deblurred image tensor approximation
         """
-        noise = torch.randn_like(y) * noise_level
-        return y + noise
+        temp = apply_matrix(self.U_small.T, y, self.img_dim)
+        temp = self.singulars_inv.view(1, 1, self.img_dim, 1) * temp
+        return apply_matrix(self.V_small, temp, self.img_dim)
+
+    def create_gaussian_kernel(self, size=21, sigma=5.0, device="cuda"):
+        """
+        Create a 1D Gaussian kernel.
+        
+        Args:
+            size: Size of the kernel (odd number recommended)
+            sigma: Standard deviation of the Gaussian
+            device: Device to create the kernel on
+        
+        Returns:
+            1D Gaussian kernel tensor
+        """
+        coords = torch.arange(size, device=device) - (size - 1) / 2
+        kernel = torch.exp(-(coords ** 2) / (2 * sigma ** 2))
+        kernel = kernel / kernel.sum()  # Normalize to sum to 1
+        return kernel
+    
+
+class InpaintingPseudoinverseOperator:
+    """
+    Pseudoinverse operator for inpainting tasks.
+    Applies a binary mask to an image, zeroing out masked regions.
+    """
+    def __init__(self, img_shape, ratio_mask):
+        """
+        Initialize the inpainting pseudoinverse operator.
+        
+        Args:
+            mask: Binary mask tensor where 1 indicates pixels to keep and 0 indicates pixels to remove
+                 Shape should match the input images [1, 1, H, W] or [1, C, H, W]
+        """
+        self.height, self.width = img_shape[0], img_shape[1]
+        self.mask = self.create_random_mask(self.height, self.width, ratio_mask)
+        
+    def __call__(self, x):
+        return self.forward(x)
+    
+    def forward(self, x):
+        """
+        Forward operation h(x): apply mask to the input image.
+        
+        Args:
+            x: Input image tensor [B, C, H, W]
+            
+        Returns:
+            Masked image tensor with same shape as input
+        """
+        return x * self.mask
+    
+    def pseudoinverse(self, y):
+        """
+        Pseudoinverse operation h†(y): for inpainting, this is simply the identity function
+        since we cannot recover the masked out information.
+        
+        Args:
+            y: Masked image tensor [B, C, H, W]
+            
+        Returns:
+            Same tensor as input (no recovery of masked pixels is possible)
+        """
+        return y
+
+    def create_random_mask(self, height=256, width=256, mask_ratio=0.5, device='cuda'):
+        """
+        Create a random binary mask.
+        
+        Args:
+            height: Height of the mask
+            width: Width of the mask
+            mask_ratio: Ratio of pixels to keep (1-mask_ratio will be masked out)
+            device: Device to create mask on
+        
+        Returns:
+            Binary mask tensor [1, 1, H, W]
+        """
+        mask = torch.rand(1, 1, height, width, device=device) > (1 - mask_ratio)
+        return mask.float()

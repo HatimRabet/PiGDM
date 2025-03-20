@@ -3,7 +3,7 @@ import torch
 from tqdm import tqdm
 from PIL import Image
 
-from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator, GrayscaleOperator
+from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator, GrayscaleOperator, BlurPseudoinverseOperator, InpaintingPseudoinverseOperator, GaussianBlurOperator
 from pseudoInverse.utils import DiffusionModel
 
 from ddpm.model import DDPM
@@ -20,15 +20,17 @@ class PiGDM:
         self.device = device
 
     def initialize_xt(self, x0_estimate, alphas_cumprod_t):
-        noise = torch.randn_like(x0_estimate)       
+        noise = torch.randn_like(x0_estimate)
         return torch.sqrt(alphas_cumprod_t) * x0_estimate + torch.sqrt(1-alphas_cumprod_t) * noise
+        
 
     def sample(
         self,
         y,                          
         num_steps=500,           
         sigma_y=None,               
-        noiseless=True,             
+        noiseless=True,   
+        optimized=True,          
         seed=None                   
     ):
         """
@@ -91,17 +93,24 @@ class PiGDM:
             if noiseless:
                 if self.measurement_operator is None:
                     raise ValueError("measurement_operator must be provided for noiseless case")
-                # Calculate h(x_hat_t)
-                h_x_hat = self.measurement_operator(x_hat_t)
+                # # Calculate h(x_hat_t)
+                # h_x_hat = self.measurement_operator(x_hat_t)
                 
-                # Calculate h†(y) - h†(h(x_hat_t))
-                h_pseudoinv_y = self.measurement_operator.pseudoinverse(y)
-                h_pseudoinv_h_x_hat = self.measurement_operator.pseudoinverse(h_x_hat)
+                # # Calculate h†(y) - h†(h(x_hat_t))
+                # h_pseudoinv_y = self.measurement_operator.pseudoinverse(y)
+                # h_pseudoinv_h_x_hat = self.measurement_operator.pseudoinverse(h_x_hat)
                 
-                # Calculate guidance term
-                diff = h_pseudoinv_y - h_pseudoinv_h_x_hat
-                mat_x = (diff.detach() * x_hat_t).sum()      
-                g = torch.autograd.grad(mat_x, x, retain_graph=False)[0].detach()
+                # # Calculate guidance term
+                # diff = h_pseudoinv_y - h_pseudoinv_h_x_hat
+                # mat_x = (diff.detach() * x_hat_t).sum()      
+                # g = torch.autograd.grad(mat_x, x, retain_graph=False)[0].detach()
+                g = noiseless_guidance(
+                    x = x,
+                    x_hat_t=x_hat_t,
+                    y = y,
+                    measurement_operator=self.measurement_operator
+                )
+                
             else:
                 # if self.H is None:
                 #     raise ValueError("measurement_matrix must be provided for noisy case")
@@ -114,16 +123,30 @@ class PiGDM:
                 
                 # mat_x = ((y - self.H @ x_hat_t).detach() * ((inv_matrix @ self.H) @ x_hat_t)).sum()
                 # g = torch.autograd.grad(mat_x, x, retain_graph=False)[0].detach()
-                sigma_t = betas[t].sqrt()
+                r_t_2 = (1 - alphas_cumprod[t]) / alphas_cumprod[t]
                 
-                g = operator_based_noisy_guidance(
-                    x=x,
-                    x_hat_t=x_hat_t,
-                    y=y,
-                    measurement_operator=self.measurement_operator,
-                    sigma_y=sigma_y,
-                    sigma_t=sigma_t,
-                )
+                if optimized :
+                    g = operator_based_noisy_guidance(
+                        x=x,
+                        x_hat_t=x_hat_t,
+                        y=y,
+                        measurement_operator=self.measurement_operator,
+                        sigma_y=sigma_y,
+                        r_t_2=r_t_2,
+                    )
+                else :
+                    #exact implementation from the paper
+                    if self.H is None:
+                        raise ValueError("measurement_matrix must be provided for noisy case")
+                    
+                    g = matrix_based_noisy_guidance(
+                        x=x,
+                        x_hat_t=x_hat_t,
+                        y=y,
+                        H = self.H,
+                        sigma_y=sigma_y,
+                        r_t_2=r_t_2,
+                    )
 
             
             x = x.detach()
@@ -132,6 +155,42 @@ class PiGDM:
             
         return x
     
+def noiseless_guidance(
+    x,                          # Current x sample (requires_grad = True)
+    x_hat_t,                    # Denoised prediction x_hat_t
+    y,                          # Measurement
+    measurement_operator        # measurement operator
+):
+    # Calculate h(x_hat_t)
+    h_x_hat = measurement_operator(x_hat_t)
+    
+    # Calculate h†(y) - h†(h(x_hat_t))
+    h_pseudoinv_y = measurement_operator.pseudoinverse(y)
+    h_pseudoinv_h_x_hat = measurement_operator.pseudoinverse(h_x_hat)
+    
+    # Calculate guidance term
+    diff = h_pseudoinv_y - h_pseudoinv_h_x_hat
+    mat_x = (diff.detach() * x_hat_t).sum()      
+    g = torch.autograd.grad(mat_x, x, retain_graph=False)[0].detach()
+    return g
+
+    
+def matrix_based_noisy_guidance(
+    x,                          # Current x sample (requires_grad = True)
+    x_hat_t,                    # Denoised prediction x_hat_t
+    y,                          # Measurement
+    H,                          # H operator matrix
+    sigma_y,                    # Measurement noise std
+    r_t_2,                      # r_t squared
+):
+    HH_T = H @ H.T
+    noise_term = (sigma_y**2 / r_t_2) * torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype)
+    inv_matrix = torch.linalg.solve(HH_T + noise_term, torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype))
+    
+    mat_x = ((y - H @ x_hat_t).detach() * ((inv_matrix @ H) @ x_hat_t)).sum()
+    g = torch.autograd.grad(mat_x, x, retain_graph=False)[0].detach()
+    return g
+
     
 def operator_based_noisy_guidance(
     x,                          # Current x sample (requires_grad = True)
@@ -139,11 +198,11 @@ def operator_based_noisy_guidance(
     y,                          # Measurement
     measurement_operator,       # h(x): forward operator
     sigma_y,                    # Measurement noise std
-    sigma_t,                    # Current diffusion noise std (sqrt(beta[t]))
+    r_t_2,                      # r_t squared
     cg_tol=1e-5,                # Convergence tolerance for conjugate gradients
     cg_max_iter=25              # Maximum iterations for conjugate gradients
 ):
-    r_t = ((sigma_t**2) / (1 + sigma_t**2)).sqrt()
+
 
     # Compute residual: y - h(x_hat_t)
     residual = y - measurement_operator(x_hat_t)
@@ -152,7 +211,7 @@ def operator_based_noisy_guidance(
     def A_fn(v):
         H_T_v = measurement_operator.pseudoinverse(v)  # Back to RGB
         H_H_T_v = measurement_operator(H_T_v)          # Back to grayscale (forward op)
-        return H_H_T_v + (sigma_y**2 / r_t**2) * v
+        return H_H_T_v + (sigma_y**2 / r_t_2) * v
 
     # Solve A z = residual using conjugate gradients
     z, _ = conjugate_gradients(A_fn, residual, max_iter=cg_max_iter, tol=cg_tol)
@@ -194,25 +253,29 @@ def conjugate_gradients(A_fn, b, max_iter=25, tol=1e-5):
 
 if __name__ == "__main__":
     # CONFIGURATION
-    guidance_factor = 0.01
+    guidance_factor = 0.001
     num_steps = 1000
     
-    image_name = "00014"
+    image_name = "00003"
     
     image_path = f"ddpm/diffusion-posterior-sampling/data/samples/{image_name}.png"
 
-    noiseless = True
-    sigma_y = 0.1
+    noiseless = False
+    sigma_y = 1
     # Load image with PIL
     pil_img = Image.open(image_path).convert('RGB')
 
     tensor_img = pilimg_to_tensor(pil_img)
-    measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
+    # measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
+    # measurement_operator = BlurPseudoinverseOperator(kernel_size=31, sigma=10)
+    measurement_operator = GaussianBlurOperator(kernel_size=11, sigma=10, wiener_k=0.05)
     # measurement_operator = IdentityOperator()
     # measurement_operator = RotationOperator(45)
     # measurement_operator = GrayscaleOperator()
 
     low_res_img = measurement_operator(tensor_img)
+    if not noiseless :
+        low_res_img += sigma_y * torch.randn_like(low_res_img)
     
     low_res_img_show = measurement_operator.pseudoinverse(low_res_img)
  
@@ -225,9 +288,12 @@ if __name__ == "__main__":
 
     # Result
     high_res_img = pidgm_sampler.sample(low_res_img, num_steps, sigma_y, noiseless)
-    out = torch.cat((low_res_img_show, high_res_img, tensor_img), dim = 2)
-
+    out = torch.cat((low_res_img, high_res_img, tensor_img), dim = 2)    
     print(f"Min: {high_res_img.min().item()}, Max: {high_res_img.max().item()}")
+    # out = torch.cat((low_res_img, low_res_img_show, tensor_img), dim = 2)
+
+
+    
 
     # Save Image
     save_pilimg(out, f"DDPM_{image_name}.png")

@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Function
 
+from pseudoInverse.utils import apply_matrix, compute_svd, wiener_deconvolution
+
 class SuperResolutionPseudoinverseOperator:
     """
     Pseudoinverse operator for super-resolution tasks.
@@ -171,10 +173,10 @@ class IdentityOperator:
         return self.forward(x)
     
     def forward(self, x):
-        return x
+        return x.clone()
     
     def pseudoinverse(self, y):
-        return y
+        return y.clone()
     
     
 class GrayscaleOperator:
@@ -215,3 +217,240 @@ class GrayscaleOperator:
         
         rgb_reconstructed = y.repeat(1, 3, 1, 1)  # shape: (batch, 3, height, width)
         return rgb_reconstructed
+    
+    
+class BlurPseudoinverseOperator:
+    """
+    Pseudoinverse operator for blur tasks.
+    Uses SVD to compute the forward blur operation and its pseudoinverse.
+    """
+    def __init__(self, kernel_size, sigma, img_dim=256, device="cuda"):
+        """
+        Initialize the blur pseudoinverse operator.
+        
+        Args:
+            kernel: The 1D kernel to use for blurring
+            img_dim: The dimension of the image (default: 256)
+            device: The device to use for computation (default: "cuda")
+        """
+        self.kernel = self.create_gaussian_kernel(kernel_size, sigma, device)
+        self.img_dim = img_dim
+        self.device = device
+        
+        # Precompute SVD for efficiency
+        self.U_small, self.singulars_small, self.V_small = compute_svd(self.kernel, img_dim, device)
+        
+        # Precompute singulars inverse for pseudoinverse operation
+        nonzero_idx = torch.nonzero(self.singulars_small, as_tuple=True)[0]
+
+        self.singulars_inv = torch.zeros_like(self.singulars_small)
+        self.singulars_inv[nonzero_idx] = 1 / self.singulars_small[nonzero_idx]
+        
+    def __call__(self, x):
+        return self.forward(x)
+    
+    def forward(self, x):
+        """
+        Forward operation h(x): apply blur to the input image.
+        
+        Args:
+            x: Input image tensor
+            
+        Returns:
+            Blurred image tensor
+        """
+        temp = apply_matrix(self.V_small.T, x, self.img_dim)
+        temp = self.singulars_small.view(1, 1, self.img_dim, 1) * temp
+        return apply_matrix(self.U_small, temp, self.img_dim)
+    
+    def pseudoinverse(self, y):
+        """
+        Pseudoinverse operation h†(y): attempt to recover the original image from a blurred one.
+        
+        Args:
+            y: Blurred image tensor
+            
+        Returns:
+            Deblurred image tensor approximation
+        """
+        temp = apply_matrix(self.U_small.T, y, self.img_dim)
+        temp = self.singulars_inv.view(1, 1, self.img_dim, 1) * temp
+        return apply_matrix(self.V_small, temp, self.img_dim)
+    
+
+    def create_gaussian_kernel(self, size, sigma, device="cuda"):
+        """
+        Create a 1D Gaussian kernel.
+        
+        Args:
+            size: Size of the kernel (odd number recommended)
+            sigma: Standard deviation of the Gaussian
+            device: Device to create the kernel on
+        
+        Returns:
+            1D Gaussian kernel tensor
+        """
+        coords = torch.arange(size, device=device) - (size - 1) / 2
+        kernel = torch.exp(-(coords ** 2) / (2 * sigma ** 2))
+        kernel = kernel / kernel.sum()  # Normalize to sum to 1
+        return kernel
+    
+    
+class GaussianBlurOperator:
+    """
+    Gaussian blur operator for image transformations.
+    Applies Gaussian blur in the forward pass.
+    Uses Wiener deconvolution as the pseudoinverse to approximate deblurring.
+    
+    Assumes input tensor x has shape (batch, channels, height, width).
+    """
+    
+    def __init__(self, kernel_size=5, sigma=1.0, wiener_k=0.01):
+        self.name = "gaussian_blur"
+        self.kernel_size = kernel_size
+        self.sigma = sigma
+        self.wiener_k = wiener_k  # Wiener regularization parameter
+        self.kernel = None  # Lazy initialization on device
+        
+    def __call__(self, x):
+        return self.forward(x)
+
+    def forward(self, x):
+        """
+        Applies Gaussian blur to input tensor x.
+        """
+        if self.kernel is None or self.kernel.device != x.device:
+            self.kernel = self.create_gaussian_kernel(x.device, x.dtype)
+
+        # Apply convolution per channel
+        channels = x.shape[1]
+        blurred = F.conv2d(x, self.kernel.expand(channels, 1, -1, -1), 
+                           padding=self.kernel_size // 2, groups=channels)
+        return blurred
+
+    def pseudoinverse(self, y):
+        """
+        Applies Wiener deconvolution to approximate the inverse of Gaussian blur.
+        
+        Args:
+            y: blurred input tensor (batch, channels, height, width)
+        Returns:
+            Deconvolved (sharpened) tensor
+        """
+        return self.wiener_deconvolution(y, self.kernel, self.wiener_k)
+
+    def create_gaussian_kernel(self, device, dtype):
+        """
+        Creates a 2D Gaussian kernel tensor of shape (1, 1, kernel_size, kernel_size).
+        """
+        k = self.kernel_size
+        sigma = self.sigma
+
+        # Create 1D kernel
+        x = torch.arange(-k // 2 + 1., k // 2 + 1., device=device, dtype=dtype)
+        x = x.view(1, -1)
+        gaussian_1d = torch.exp(-0.5 * (x / sigma)**2)
+        gaussian_1d = gaussian_1d / gaussian_1d.sum()
+
+        # Create 2D kernel via outer product
+        gaussian_2d = gaussian_1d.T @ gaussian_1d
+        gaussian_2d = gaussian_2d / gaussian_2d.sum()
+
+        kernel = gaussian_2d.view(1, 1, k, k)
+        return kernel
+
+    def wiener_deconvolution(self, y, kernel, K=0.01):
+        """
+        Performs Wiener deconvolution on input tensor y using blur kernel.
+        
+        Args:
+            y: Blurry input image (batch, channels, height, width)
+            kernel: Blur kernel (1, 1, kH, kW)
+            K: Regularization constant (noise-to-signal ratio)
+        Returns:
+            Deconvolved image tensor (same shape as y)
+        """
+        batch_size, channels, height, width = y.shape
+        
+        # Pad kernel to image size
+        pad_h = height - kernel.shape[2]
+        pad_w = width - kernel.shape[3]
+        pad = (0, pad_w, 0, pad_h)
+        kernel_padded = F.pad(kernel, pad)
+
+        # FFT of kernel and image
+        H = torch.fft.fft2(kernel_padded, dim=(-2, -1))
+        H_conj = torch.conj(H)
+        H_abs2 = (H.real ** 2 + H.imag ** 2)
+        
+        Y = torch.fft.fft2(y, dim=(-2, -1))
+
+        # Wiener filter calculation
+        wiener_filter = H_conj / (H_abs2 + K)
+
+        # Apply filter and inverse FFT
+        X = wiener_filter * Y
+        x_reconstructed = torch.fft.ifft2(X, dim=(-2, -1)).real
+
+        return x_reconstructed
+
+    
+class InpaintingPseudoinverseOperator:
+    """
+    Pseudoinverse operator for inpainting tasks.
+    Applies a binary mask to an image, zeroing out masked regions.
+    """
+    def __init__(self, img_shape, ratio_mask):
+        """
+        Initialize the inpainting pseudoinverse operator.
+        
+        Args:
+            mask: Binary mask tensor where 1 indicates pixels to keep and 0 indicates pixels to remove
+                 Shape should match the input images [1, 1, H, W] or [1, C, H, W]
+        """
+        self.height, self.width = img_shape[0], img_shape[1]
+        self.mask = self.create_random_mask(self.height, self.width, ratio_mask)
+        
+    def __call__(self, x):
+        return self.forward(x)
+    
+    def forward(self, x):
+        """
+        Forward operation h(x): apply mask to the input image.
+        
+        Args:
+            x: Input image tensor [B, C, H, W]
+            
+        Returns:
+            Masked image tensor with same shape as input
+        """
+        return x * self.mask
+    
+    def pseudoinverse(self, y):
+        """
+        Pseudoinverse operation h†(y): for inpainting, this is simply the identity function
+        since we cannot recover the masked out information.
+        
+        Args:
+            y: Masked image tensor [B, C, H, W]
+            
+        Returns:
+            Same tensor as input (no recovery of masked pixels is possible)
+        """
+        return y
+
+    def create_random_mask(self, height=256, width=256, mask_ratio=0.5, device='cuda'):
+        """
+        Create a random binary mask.
+        
+        Args:
+            height: Height of the mask
+            width: Width of the mask
+            mask_ratio: Ratio of pixels to keep (1-mask_ratio will be masked out)
+            device: Device to create mask on
+        
+        Returns:
+            Binary mask tensor [1, 1, H, W]
+        """
+        mask = torch.rand(1, 1, height, width, device=device) > (1 - mask_ratio)
+        return mask.float()

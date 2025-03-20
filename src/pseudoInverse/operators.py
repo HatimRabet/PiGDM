@@ -5,6 +5,8 @@ import torch.nn.functional as F
 from torch.autograd import Function
 from pseudoInverse.utils import compute_svd, apply_matrix
 
+from pseudoInverse.utils import apply_matrix, compute_svd, wiener_deconvolution
+
 class SuperResolutionPseudoinverseOperator:
     """
     Pseudoinverse operator for super-resolution tasks.
@@ -217,7 +219,7 @@ class GrayscaleOperator:
         rgb_reconstructed = y.repeat(1, 3, 1, 1)  # shape: (batch, 3, height, width)
         return rgb_reconstructed
     
-
+    
 class BlurPseudoinverseOperator:
     """
     Pseudoinverse operator for blur tasks.
@@ -275,6 +277,7 @@ class BlurPseudoinverseOperator:
         temp = apply_matrix(self.U_small.T, y, self.img_dim)
         temp = self.singulars_inv.view(1, 1, self.img_dim, 1) * temp
         return apply_matrix(self.V_small, temp, self.img_dim)
+    
 
     def create_gaussian_kernel(self, size, sigma, device="cuda"):
         """
@@ -293,7 +296,106 @@ class BlurPseudoinverseOperator:
         kernel = kernel / kernel.sum()  # Normalize to sum to 1
         return kernel
     
+    
+class GaussianBlurOperator:
+    """
+    Gaussian blur operator for image transformations.
+    Applies Gaussian blur in the forward pass.
+    Uses Wiener deconvolution as the pseudoinverse to approximate deblurring.
+    
+    Assumes input tensor x has shape (batch, channels, height, width).
+    """
+    
+    def __init__(self, kernel_size=5, sigma=1.0, wiener_k=0.01):
+        self.name = "gaussian_blur"
+        self.kernel_size = kernel_size
+        self.sigma = sigma
+        self.wiener_k = wiener_k  # Wiener regularization parameter
+        self.kernel = None  # Lazy initialization on device
+        
+    def __call__(self, x):
+        return self.forward(x)
 
+    def forward(self, x):
+        """
+        Applies Gaussian blur to input tensor x.
+        """
+        if self.kernel is None or self.kernel.device != x.device:
+            self.kernel = self.create_gaussian_kernel(x.device, x.dtype)
+
+        # Apply convolution per channel
+        channels = x.shape[1]
+        blurred = F.conv2d(x, self.kernel.expand(channels, 1, -1, -1), 
+                           padding=self.kernel_size // 2, groups=channels)
+        return blurred
+
+    def pseudoinverse(self, y):
+        """
+        Applies Wiener deconvolution to approximate the inverse of Gaussian blur.
+        
+        Args:
+            y: blurred input tensor (batch, channels, height, width)
+        Returns:
+            Deconvolved (sharpened) tensor
+        """
+        return self.wiener_deconvolution(y, self.kernel, self.wiener_k)
+
+    def create_gaussian_kernel(self, device, dtype):
+        """
+        Creates a 2D Gaussian kernel tensor of shape (1, 1, kernel_size, kernel_size).
+        """
+        k = self.kernel_size
+        sigma = self.sigma
+
+        # Create 1D kernel
+        x = torch.arange(-k // 2 + 1., k // 2 + 1., device=device, dtype=dtype)
+        x = x.view(1, -1)
+        gaussian_1d = torch.exp(-0.5 * (x / sigma)**2)
+        gaussian_1d = gaussian_1d / gaussian_1d.sum()
+
+        # Create 2D kernel via outer product
+        gaussian_2d = gaussian_1d.T @ gaussian_1d
+        gaussian_2d = gaussian_2d / gaussian_2d.sum()
+
+        kernel = gaussian_2d.view(1, 1, k, k)
+        return kernel
+
+    def wiener_deconvolution(self, y, kernel, K=0.01):
+        """
+        Performs Wiener deconvolution on input tensor y using blur kernel.
+        
+        Args:
+            y: Blurry input image (batch, channels, height, width)
+            kernel: Blur kernel (1, 1, kH, kW)
+            K: Regularization constant (noise-to-signal ratio)
+        Returns:
+            Deconvolved image tensor (same shape as y)
+        """
+        batch_size, channels, height, width = y.shape
+        
+        # Pad kernel to image size
+        pad_h = height - kernel.shape[2]
+        pad_w = width - kernel.shape[3]
+        pad = (0, pad_w, 0, pad_h)
+        kernel_padded = F.pad(kernel, pad)
+
+        # FFT of kernel and image
+        H = torch.fft.fft2(kernel_padded, dim=(-2, -1))
+        H_conj = torch.conj(H)
+        H_abs2 = (H.real ** 2 + H.imag ** 2)
+        
+        Y = torch.fft.fft2(y, dim=(-2, -1))
+
+        # Wiener filter calculation
+        wiener_filter = H_conj / (H_abs2 + K)
+
+        # Apply filter and inverse FFT
+        X = wiener_filter * Y
+        x_reconstructed = torch.fft.ifft2(X, dim=(-2, -1)).real
+
+        return x_reconstructed
+
+    
 class InpaintingPseudoinverseOperator:
     """
     Pseudoinverse operator for inpainting tasks.

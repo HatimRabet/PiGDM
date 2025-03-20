@@ -3,7 +3,7 @@ from tqdm import tqdm
 import numpy as np
 from PIL import Image
 
-from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator
+from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator, GrayscaleOperator
 from pseudoInverse.utils import DiffusionModel
 
 from ddpm.utils import pilimg_to_tensor, save_pilimg
@@ -90,7 +90,8 @@ class PiGDM:
 
 if __name__ == "__main__":
     # CONFIGURATION
-    image_path = "ddpm/diffusion-posterior-sampling/data/samples/00015.png"
+    image_name = "00015"
+    image_path = f"ddpm/diffusion-posterior-sampling/data/samples/{image_name}.png"
     scale_factor = 4  
 
     noiseless = False
@@ -103,8 +104,9 @@ if __name__ == "__main__":
     # Setup measurement operator
     # measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic", scale_factor=scale_factor)
     # measurement_operator = RotationOperator(45)
-    measurement_operator = IdentityOperator()
+    # measurement_operator = IdentityOperator()
     # measurement_operator = RotationOperator(45)
+    measurement_operator = GrayscaleOperator()
     measurement_matrix = torch.eye(256).to('cuda')
 
 
@@ -122,20 +124,20 @@ if __name__ == "__main__":
         measurement_operator=measurement_operator,
         measurement_matrix=measurement_matrix,
         eta=1, 
-        guidance_factor=0.05,
+        guidance_factor=0.01,
         device="cuda" if torch.cuda.is_available() else "cpu"
     )
 
     # Perform super-resolution
     high_res_reconstructed = pgdm_sampler.sample(
         y=low_res_img,
-        num_steps=100,
+        num_steps=500,
         sigma_y=sigma_y,
         noiseless=noiseless
     )
 
     # Save the high-resolution reconstructed image
-    save_pilimg(high_res_reconstructed, "reconstructed_image_15.png")
+    save_pilimg(high_res_reconstructed, f"DDIM_{image_name}.png")
 
     # Print the min and max pixel values
     print(f"Min: {high_res_reconstructed.min().item():.4f}, Max: {high_res_reconstructed.max().item():.4f}")

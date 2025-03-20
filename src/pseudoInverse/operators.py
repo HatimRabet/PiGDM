@@ -172,10 +172,10 @@ class IdentityOperator:
         return self.forward(x)
     
     def forward(self, x):
-        return x
+        return x.clone()
     
     def pseudoinverse(self, y):
-        return y
+        return y.clone()
     
     
 class GrayscaleOperator:
@@ -276,7 +276,7 @@ class BlurPseudoinverseOperator:
         temp = self.singulars_inv.view(1, 1, self.img_dim, 1) * temp
         return apply_matrix(self.V_small, temp, self.img_dim)
 
-    def create_gaussian_kernel(self, size=21, sigma=5.0, device="cuda"):
+    def create_gaussian_kernel(self, size, sigma, device="cuda"):
         """
         Create a 1D Gaussian kernel.
         

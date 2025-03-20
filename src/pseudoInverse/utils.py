@@ -43,4 +43,4 @@ def apply_matrix(M, vec, img_dim):
     vec = vec.view(batch_size * 3, img_dim, img_dim)
     vec = torch.matmul(M, vec)
     vec = torch.matmul(vec, M.T)
-    return vec.view(batch_size, 3, img_dim, img_dim) 
+    return vec.view(batch_size, 3, img_dim, img_dim)

@@ -57,7 +57,7 @@ def measure_inference_speed(model, measurement_operator, test_loader, device="cu
     return avg_time_per_image
 
 
-def evaluate_model(sampler, test_loader, num_steps = 100, sigma_y=None, noiseless=True, seed=None, device="cuda"):
+def evaluate_model(sampler, test_loader, num_steps = 100, sigma_y=None, noiseless=True, seed=None, optimized=False, device="cuda"):
     psnr_list, ssim_list, fid_real, fid_fake = [], [], [], []
 
     real_images_list, recon_images_list = [], []
@@ -67,7 +67,7 @@ def evaluate_model(sampler, test_loader, num_steps = 100, sigma_y=None, noiseles
         measurement = sampler.measurement_operator(real_images)
 
         # Generate reconstructed images
-        reconstructed_images = sampler.sample(measurement, num_steps, sigma_y, noiseless, seed)
+        reconstructed_images = sampler.sample(measurement, num_steps, sigma_y, noiseless, optimized, seed)
 
         for i in range(real_images.size(0)):
             psnr_list.append(compute_psnr(real_images[i], reconstructed_images[i]))

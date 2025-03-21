@@ -10,7 +10,7 @@ from ddpm.model import DDPM
 from ddpm.utils import pilimg_to_tensor, save_pilimg
 
 
-class PiGDM:
+class PiGDM_DDPM:
     def __init__(self, model, measurement_operator, measurement_matrix=None, eta=1, guidance_factor=0.01, device='cuda'):
         self.model = model
         self.measurement_operator = measurement_operator

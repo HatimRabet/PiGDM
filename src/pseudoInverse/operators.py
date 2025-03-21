@@ -401,7 +401,7 @@ class InpaintingPseudoinverseOperator:
     Pseudoinverse operator for inpainting tasks.
     Applies a binary mask to an image, zeroing out masked regions.
     """
-    def __init__(self, img_shape, ratio_mask):
+    def __init__(self, img_shape, ratio_mask, block_size, random):
         """
         Initialize the inpainting pseudoinverse operator.
         
@@ -410,7 +410,10 @@ class InpaintingPseudoinverseOperator:
                  Shape should match the input images [1, 1, H, W] or [1, C, H, W]
         """
         self.height, self.width = img_shape[0], img_shape[1]
-        self.mask = self.create_random_mask(self.height, self.width, ratio_mask)
+        if random:
+            self.mask = self.create_random_mask(self.height, self.width, ratio_mask)
+        else:
+            self.mask = self.create_block_mask(self.height, self.width, block_size)
         
     def __call__(self, x):
         return self.forward(x)
@@ -455,3 +458,27 @@ class InpaintingPseudoinverseOperator:
         """
         mask = torch.rand(1, 1, height, width, device=device) > (1 - mask_ratio)
         return mask.float()
+
+
+    def create_block_mask(self, height=256, width=256, block_size=100, device='cuda'):
+        """
+        Create a mask with a block hole in the center.
+        
+        Args:
+            height: Height of the mask
+            width: Width of the mask
+            block_size: Size of the square hole
+            device: Device to create mask on
+        
+        Returns:
+            Binary mask tensor [1, 1, H, W]
+        """
+        mask = torch.ones(1, 1, height, width, device=device)
+        center_h, center_w = height // 2, width // 2
+        half_block = block_size // 2
+        
+        mask[:, :, 
+            center_h-half_block:center_h+half_block, 
+            center_w-half_block:center_w+half_block] = 0
+        
+        return mask

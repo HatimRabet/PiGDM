@@ -98,35 +98,71 @@ def save_results(result, original_img, naive_image, path):
     save_pilimg(out, path)
     
 
-def plot_results(results, save_path="results/super_resolution/"):
+# def plot_results(results, save_path="results/super_resolution/"):
+#     # Ensure the save directory exists
+#     os.makedirs(save_path, exist_ok=True)
+
+#     plt.figure(figsize=(12, 5))
+
+#     # Histogram of PSNR values
+#     plt.subplot(1, 2, 1)
+#     plt.hist(results["all_PSNR"], bins=20, color='blue', alpha=0.7, edgecolor='black')
+#     plt.axvline(results["PSNR"], color='red', linestyle='dashed', linewidth=2, label=f'Avg PSNR: {results["PSNR"]:.2f}')
+#     plt.xlabel("PSNR (dB)")
+#     plt.ylabel("Frequency")
+#     plt.title("Distribution of PSNR Scores")
+#     plt.legend()
+
+#     # Histogram of SSIM values
+#     plt.subplot(1, 2, 2)
+#     plt.hist(results["all_SSIM"], bins=20, color='green', alpha=0.7, edgecolor='black')
+#     plt.axvline(results["SSIM"], color='red', linestyle='dashed', linewidth=2, label=f'Avg SSIM: {results["SSIM"]:.2f}')
+#     plt.xlabel("SSIM")
+#     plt.ylabel("Frequency")
+#     plt.title("Distribution of SSIM Scores")
+#     plt.legend()
+
+#     # Save Accuracy plot
+#     plt.savefig(os.path.join(save_path, "psnr_ssim.png"))
+
+#     plt.tight_layout()
+#     plt.show()
+
+
+def plot_results(results, filename="psnr_ssim.png", save_path="results/super_resolution/"):
     # Ensure the save directory exists
     os.makedirs(save_path, exist_ok=True)
 
-    plt.figure(figsize=(12, 5))
-
+    # Create figure with subplots
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))  # 1 row, 2 columns
+    
     # Histogram of PSNR values
-    plt.subplot(1, 2, 1)
-    plt.hist(results["all_PSNR"], bins=20, color='blue', alpha=0.7, edgecolor='black')
-    plt.axvline(results["PSNR"], color='red', linestyle='dashed', linewidth=2, label=f'Avg PSNR: {results["PSNR"]:.2f}')
-    plt.xlabel("PSNR (dB)")
-    plt.ylabel("Frequency")
-    plt.title("Distribution of PSNR Scores")
-    plt.legend()
+    axes[0].hist(results["all_PSNR"], bins=20, color='blue', alpha=0.7, edgecolor='black')
+    axes[0].axvline(results["PSNR"], color='red', linestyle='dashed', linewidth=2, label=f'Avg PSNR: {results["PSNR"]:.2f}')
+    axes[0].set_xlabel("PSNR (dB)", fontsize=12)
+    axes[0].set_ylabel("Frequency", fontsize=12)
+    axes[0].set_title("Distribution of PSNR Scores", fontsize=14)
+    axes[0].legend()
 
     # Histogram of SSIM values
-    plt.subplot(1, 3, 2)
-    plt.hist(results["all_SSIM"], bins=20, color='green', alpha=0.7, edgecolor='black')
-    plt.axvline(results["SSIM"], color='red', linestyle='dashed', linewidth=2, label=f'Avg SSIM: {results["SSIM"]:.2f}')
-    plt.xlabel("SSIM")
-    plt.ylabel("Frequency")
-    plt.title("Distribution of SSIM Scores")
-    plt.legend()
+    axes[1].hist(results["all_SSIM"], bins=20, color='green', alpha=0.7, edgecolor='black')
+    axes[1].axvline(results["SSIM"], color='red', linestyle='dashed', linewidth=2, label=f'Avg SSIM: {results["SSIM"]:.2f}')
+    axes[1].set_xlabel("SSIM", fontsize=12)
+    axes[1].set_ylabel("Frequency", fontsize=12)
+    axes[1].set_title("Distribution of SSIM Scores", fontsize=14)
+    axes[1].legend()
 
-    # Save Accuracy plot
-    plt.savefig(os.path.join(save_path, "psnr_ssim.png"))
+    # Adjust spacing
+    plt.tight_layout()  
+    plt.subplots_adjust(wspace=0.3)  
 
-    plt.tight_layout()
+    # Save the figure
+    save_file = os.path.join(save_path, filename)
+    plt.savefig(save_file, bbox_inches='tight', dpi=300)  
+
+    # Show the plot
     plt.show()
+
 
 class ImageDataset(Dataset):
     def __init__(self, folder_path, transform=None):

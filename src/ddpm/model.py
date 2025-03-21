@@ -9,6 +9,7 @@ from tqdm import tqdm
 from ddpm.guided_diffusion.unet import create_model
 from ddpm.utils import display_as_pilimg
 
+
 # CONFIG
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 model_config = {

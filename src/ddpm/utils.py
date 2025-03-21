@@ -68,12 +68,17 @@ def save_pilimg(t, filename):
     Returns:
         PIL.Image.Image: The converted PIL image.
     """
+    pil_img = standardize_img(t)
+    pil_img.save(filename)
+    
+    return pil_img
+
+
+def standardize_img(t):
     t = 0.5 + 0.5 * t.to('cpu')
     t = t.squeeze()
     t = t.clamp(0., 1.)
     pil_img = torchvision.transforms.ToPILImage()(t)
-    pil_img.save(filename)
-    
     return pil_img
 
 

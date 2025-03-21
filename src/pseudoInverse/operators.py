@@ -5,9 +5,9 @@ import torch.nn.functional as F
 from torch.autograd import Function
 from pseudoInverse.utils import compute_svd, apply_matrix
 
-from pseudoInverse.utils import apply_matrix, compute_svd, wiener_deconvolution
+from pseudoInverse.utils import apply_matrix, compute_svd
 
-class SuperResolutionPseudoinverseOperator:
+class SuperResolutionOperator:
     """
     Pseudoinverse operator for super-resolution tasks.
     Handles both average pooling and bicubic downsampling.
@@ -220,7 +220,7 @@ class GrayscaleOperator:
         return rgb_reconstructed
     
     
-class BlurPseudoinverseOperator:
+class BlurOperator:
     """
     Pseudoinverse operator for blur tasks.
     Uses SVD to compute the forward blur operation and its pseudoinverse.
@@ -396,7 +396,7 @@ class GaussianBlurOperator:
         return x_reconstructed
 
     
-class InpaintingPseudoinverseOperator:
+class InpaintingOperator:
     """
     Pseudoinverse operator for inpainting tasks.
     Applies a binary mask to an image, zeroing out masked regions.

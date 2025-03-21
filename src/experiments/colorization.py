@@ -1,7 +1,7 @@
 import os
 from torch.utils.data import DataLoader, Subset
 
-from pseudoInverse.algorithm4 import PiGDM, DiffusionModel
+from PiGDM.src.pseudoInverse.pigdm_ddim import PiGDM_DDIM, DiffusionModel
 from pseudoInverse.operators import GrayscaleOperator
 
 from ddpm.model import DDPM
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     num_steps = 100
 
     # Initialize sampler
-    pigdm_sampler = PiGDM(model, measurement_operator, guidance_factor=guidance_factor)
+    pigdm_sampler = PiGDM_DDIM(model, measurement_operator, guidance_factor=guidance_factor)
 
     results = evaluate_model(pigdm_sampler, test_loader_all, num_steps, sigma_y=None, noiseless=True, seed=None, device="cuda")
     plot_results(results, save_path="results/coloriation/")

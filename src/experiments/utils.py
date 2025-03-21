@@ -129,7 +129,7 @@ def save_results(result, original_img, naive_image, path):
 #     plt.show()
 
 
-def plot_results(results, save_path="results/super_resolution/"):
+def plot_results(results, filename="psnr_ssim.png", save_path="results/super_resolution/"):
     # Ensure the save directory exists
     os.makedirs(save_path, exist_ok=True)
 
@@ -157,7 +157,7 @@ def plot_results(results, save_path="results/super_resolution/"):
     plt.subplots_adjust(wspace=0.3)  
 
     # Save the figure
-    save_file = os.path.join(save_path, "psnr_ssim.png")
+    save_file = os.path.join(save_path, filename)
     plt.savefig(save_file, bbox_inches='tight', dpi=300)  
 
     # Show the plot

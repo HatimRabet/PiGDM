@@ -3,11 +3,12 @@ from tqdm import tqdm
 import numpy as np
 from PIL import Image
 
-from pseudoInverse.operators import SuperResolutionPseudoinverseOperator, RotationOperator, IdentityOperator, GrayscaleOperator
-from pseudoInverse.utils import DiffusionModel
+from pseudoInverse.operators import SuperResolutionOperator, RotationOperator, IdentityOperator, GrayscaleOperator
+from pseudoInverse.utils import DiffusionModel, noiseless_guidance, matrix_based_noisy_guidance, operator_based_noisy_guidance
 
 from ddpm.utils import pilimg_to_tensor, save_pilimg
 from ddpm.model import DDPM
+
 
 class PiGDM_DDIM:
     def __init__(self, model, measurement_operator, measurement_matrix=None, eta=1, guidance_factor=0.01, device='cuda'):
@@ -30,13 +31,22 @@ class PiGDM_DDIM:
                 y,                        
                 num_steps = 100,           
                 sigma_y=None,               
-                noiseless=True,             
+                noiseless=True,   
+                optimized=True,          
                 seed=None 
                 ):
         
-        device = 'cuda'
+        if seed is not None:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            
+        device = self.device
+        
+        y = y.to(device)
+        
         T = self.model.num_diffusion_timesteps
-        timesteps = torch.linspace(T // 2, 0, num_steps+1).long().to(self.device)
+        timesteps = torch.linspace(T // 2, 0, num_steps+1).long().to(device)
+        
 
         xt = self.initialize(y, timesteps[0])
 
@@ -54,28 +64,39 @@ class PiGDM_DDIM:
 
             et, x0_pred = self.model(xt, t)
             if noiseless:
-                if self.measurement_operator is None:
-                    raise ValueError("measurement_operator must be provided for noiseless case")
-                H = self.measurement_operator
-                diff = (H.pseudoinverse(y.to(device)) - H.pseudoinverse(H(x0_pred.to(device)))).reshape(x0_pred.to(device).size(0), -1)
-                mat_x = (diff.detach() * x0_pred.reshape(x0_pred.size(0), -1)).sum()
-                g = torch.autograd.grad(mat_x, xt, retain_graph=True)[0].detach()
+                g = noiseless_guidance(
+                    x = xt,
+                    x_hat_t=x0_pred,
+                    y = y,
+                    measurement_operator=self.measurement_operator
+                )
+                
             else:
-                if self.H is None:
-                    raise ValueError("measurement_matrix must be provided for noisy case")
-                H = self.H
                 sigma_t = self.model.betas[t] ** 0.5
-                r_t = ((sigma_t ** 2) / (1 + sigma_t ** 2)) ** 0.5
-
-                HH_T = self.H @ self.H.T
-                noise_term = (sigma_y**2 / r_t**2) * torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype)
-                inv_matrix = torch.linalg.solve(HH_T + noise_term, torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype))
+                r_t_2 = ((sigma_t ** 2) / (1 + sigma_t ** 2)) 
                 
-                mat_x = ((y - self.H @ x0_pred).detach() * ((inv_matrix @ self.H) @ x0_pred)).sum()
-                g = torch.autograd.grad(mat_x, xt, retain_graph=False)[0].detach()
+                if optimized :
+                    g = operator_based_noisy_guidance(
+                        x = xt,
+                        x_hat_t= x0_pred,
+                        y = y,
+                        measurement_operator=self.measurement_operator,
+                        sigma_y=sigma_y,
+                        r_t_2=r_t_2
+                    )
                 
-
-            # coeff = np.sqrt(alpha_s) * np.sqrt(alpha_t) * self.guidance_factor
+                else :
+                    if self.H is None:
+                        raise ValueError("measurement_matrix must be provided for noisy case")
+                    g = matrix_based_noisy_guidance(
+                        x = xt,
+                        x_hat_t= x0_pred,
+                        y = y,
+                        H=self.H,
+                        sigma_y=sigma_y,
+                        r_t_2=r_t_2
+                    )
+                    
             coeff = np.sqrt(alpha_t) * self.guidance_factor
 
             noise = torch.randn_like(xt)
@@ -91,9 +112,10 @@ class PiGDM_DDIM:
 if __name__ == "__main__":
     # CONFIGURATION
     image_name = "00015"
-    image_path = f"ddpm/diffusion-posterior-sampling/data/samples/{image_name}.png"
+    image_path = f"dataset/samples/{image_name}.png"
     scale_factor = 4  
 
+    num_steps=100
     noiseless = False
     sigma_y = 0.1
 
@@ -102,13 +124,7 @@ if __name__ == "__main__":
     tensor_img = pilimg_to_tensor(pil_img)
 
     # Setup measurement operator
-    # measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic", scale_factor=scale_factor)
-    # measurement_operator = RotationOperator(45)
-    # measurement_operator = IdentityOperator()
-    # measurement_operator = RotationOperator(45)
-    measurement_operator = GrayscaleOperator()
-    measurement_matrix = torch.eye(256).to('cuda')
-
+    measurement_operator = SuperResolutionOperator(mode="bicubic")
 
     # Create low-resolution image (measurement)
     low_res_img = measurement_operator(tensor_img)
@@ -119,10 +135,9 @@ if __name__ == "__main__":
     model = DiffusionModel(ddpm)
 
     # Instantiate the PGDM sampler
-    pgdm_sampler = PiGDM(
+    pgdm_sampler = PiGDM_DDIM(
         model=model,
         measurement_operator=measurement_operator,
-        measurement_matrix=measurement_matrix,
         eta=1, 
         guidance_factor=0.01,
         device="cuda" if torch.cuda.is_available() else "cpu"
@@ -131,11 +146,12 @@ if __name__ == "__main__":
     # Perform super-resolution
     high_res_reconstructed = pgdm_sampler.sample(
         y=low_res_img,
-        num_steps=500,
+        num_steps=num_steps,
         sigma_y=sigma_y,
-        noiseless=noiseless
+        noiseless=noiseless,
+        optimized=True
     )
-
+    
     # Save the high-resolution reconstructed image
     save_pilimg(high_res_reconstructed, f"DDIM_{image_name}.png")
 

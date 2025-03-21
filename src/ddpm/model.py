@@ -9,6 +9,7 @@ from tqdm import tqdm
 from ddpm.guided_diffusion.unet import create_model
 from ddpm.utils import display_as_pilimg
 
+
 # CONFIG
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 model_config = {
@@ -28,7 +29,7 @@ model_config = {
     "resblock_updown": True,
     "use_fp16": False,
     "use_new_attention_order": False,
-    "model_path": "../ffhq_10m.pt",
+    "model_path": "ffhq_10m.pt",
 }
 
 model = create_model(**model_config)

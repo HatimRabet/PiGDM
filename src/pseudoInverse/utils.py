@@ -25,6 +25,104 @@ class DiffusionModel:
         return eps, x0_pred
     
     
+
+def noiseless_guidance(
+    x,                          # Current x sample (requires_grad = True)
+    x_hat_t,                    # Denoised prediction x_hat_t
+    y,                          # Measurement
+    measurement_operator        # measurement operator
+):
+    # Calculate h(x_hat_t)
+    h_x_hat = measurement_operator(x_hat_t)
+    
+    # Calculate h†(y) - h†(h(x_hat_t))
+    h_pseudoinv_y = measurement_operator.pseudoinverse(y)
+    h_pseudoinv_h_x_hat = measurement_operator.pseudoinverse(h_x_hat)
+    
+    # Calculate guidance term
+    diff = h_pseudoinv_y - h_pseudoinv_h_x_hat
+    mat_x = (diff.detach() * x_hat_t).sum()      
+    g = torch.autograd.grad(mat_x, x, retain_graph=False)[0].detach()
+    return g
+
+    
+def matrix_based_noisy_guidance(
+    x,                          # Current x sample (requires_grad = True)
+    x_hat_t,                    # Denoised prediction x_hat_t
+    y,                          # Measurement
+    H,                          # H operator matrix
+    sigma_y,                    # Measurement noise std
+    r_t_2,                      # r_t squared
+):
+    HH_T = H @ H.T
+    noise_term = (sigma_y**2 / r_t_2) * torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype)
+    inv_matrix = torch.linalg.solve(HH_T + noise_term, torch.eye(HH_T.shape[0], device=HH_T.device, dtype=HH_T.dtype))
+    
+    mat_x = ((y - H @ x_hat_t).detach() * ((inv_matrix @ H) @ x_hat_t)).sum()
+    g = torch.autograd.grad(mat_x, x, retain_graph=False)[0].detach()
+    return g
+
+    
+def operator_based_noisy_guidance(
+    x,                          # Current x sample (requires_grad = True)
+    x_hat_t,                    # Denoised prediction x_hat_t
+    y,                          # Measurement
+    measurement_operator,       # h(x): forward operator
+    sigma_y,                    # Measurement noise std
+    r_t_2,                      # r_t squared
+    cg_tol=1e-5,                # Convergence tolerance for conjugate gradients
+    cg_max_iter=25              # Maximum iterations for conjugate gradients
+):
+
+
+    # Compute residual: y - h(x_hat_t)
+    residual = y - measurement_operator(x_hat_t)
+
+    # Define linear operator A = HH_T + sigma_y^2 / r_t^2 * I
+    def A_fn(v):
+        H_T_v = measurement_operator.pseudoinverse(v)  # Back to RGB
+        H_H_T_v = measurement_operator(H_T_v)          # Back to grayscale (forward op)
+        return H_H_T_v + (sigma_y**2 / r_t_2) * v
+
+    # Solve A z = residual using conjugate gradients
+    z, _ = conjugate_gradients(A_fn, residual, max_iter=cg_max_iter, tol=cg_tol)
+    # print("z shape", z.shape)
+    # print("h(x_hat_t) shape",measurement_operator(x_hat_t).shape)
+    # Compute gradient (VJP): Jᵗ(z)
+    # Autograd way: sum(h(x_hat_t) * z) then differentiate w.r.t. x_hat_t
+    mat_x = (measurement_operator(x_hat_t) * z.detach()).sum()
+    # print("mat_x shape", z.shape)
+    g = torch.autograd.grad(mat_x, x, retain_graph=False)[0].detach()
+
+    return g
+
+
+def conjugate_gradients(A_fn, b, max_iter=25, tol=1e-5):
+    """
+    Solves A x = b using the conjugate gradients method.
+    A_fn: function implementing matrix-vector product A(v)
+    b: right-hand side vector
+    """
+    x = torch.zeros_like(b)
+    r = b.clone()
+    p = r.clone()
+    rs_old = torch.sum(r * r)
+
+    for i in range(max_iter):
+        Ap = A_fn(p)
+        alpha = rs_old / (torch.sum(p * Ap) + 1e-8)
+        x = x + alpha * p
+        r = r - alpha * Ap
+        rs_new = torch.sum(r * r)
+        if torch.sqrt(rs_new) < tol:
+            break
+        p = r + (rs_new / rs_old) * p
+        rs_old = rs_new
+
+    return x, i    
+    
+    
+    
 def compute_svd(kernel, img_dim, device):
     H_small = torch.zeros(img_dim, img_dim, device=device)
     kernel_size = kernel.shape[0]

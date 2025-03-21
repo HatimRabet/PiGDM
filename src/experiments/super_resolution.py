@@ -1,7 +1,7 @@
 import os
 
-from pseudoInverse.algorithm4 import PiGDM, DiffusionModel
-from pseudoInverse.operators import SuperResolutionPseudoinverseOperator
+from PiGDM.src.pseudoInverse.pigdm_ddim import PiGDM_DDIM, DiffusionModel
+from pseudoInverse.operators import SuperResolutionOperator
 
 from ddpm.model import DDPM
 
@@ -23,7 +23,7 @@ if __name__ == "__main__":
     test_loader_all = DataLoader(subset, batch_size=2, shuffle=False)
 
     # Create DataLoader
-    measurement_operator = SuperResolutionPseudoinverseOperator(mode="bicubic")
+    measurement_operator = SuperResolutionOperator(mode="bicubic")
 
     # Intialize Model
     ddpm = DDPM()
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     num_steps = 100
 
     # Initialize sampler
-    pigdm_sampler = PiGDM(model, measurement_operator, guidance_factor=guidance_factor)
+    pigdm_sampler = PiGDM_DDIM(model, measurement_operator, guidance_factor=guidance_factor)
 
     results = evaluate_model(pigdm_sampler, test_loader_all, num_steps, sigma_y=None, noiseless=True, seed=None, device="cuda")
     plot_results(results)

@@ -117,7 +117,7 @@ if __name__ == "__main__":
 
     num_steps=100
     noiseless = False
-    sigma_y = 0.1
+    sigma_y = 0.05
 
     # Load image with PIL
     pil_img = Image.open(image_path).convert('RGB')
